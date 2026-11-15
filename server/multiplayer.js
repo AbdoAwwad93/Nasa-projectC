@@ -24,16 +24,23 @@ const server = createServer(async (req, res) => {
       const playerId = String(body.playerId || randomUUID());
       let code;
       do { code = randomInt(0, 1_000_000).toString().padStart(6, '0'); } while (rooms.has(code));
-      const room = { code, hostId: playerId, started: false, currentDay: 1, finished: false, players: [{ id: playerId, name: clean(body.name), ready: true }], completedTasks: [], events: [], voiceSignals: [], rovers: [] };
+      const room = { code, hostId: playerId, started: false, currentDay: 1, finished: false, players: [{ id: playerId, name: clean(body.name), ready: true }], completedTasks: [], events: [], chatMessages: [], voiceSignals: [], rovers: [] };
       rooms.set(code, room);
       return send(res, 201, { playerId, room: roomView(room) });
     }
-    const roomMatch = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]+)(?:\/(join|ready|start|advance-day|tasks|events|leave|cancel|voice|players\/position))?$/i);
+    const roomMatch = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]+)(?:\/(join|ready|start|advance-day|tasks|events|chat|leave|cancel|voice|players\/position))?$/i);
     if (!roomMatch) return send(res, 404, { error: 'Not found' });
     const [, rawCode, action] = roomMatch;
     const room = rooms.get(rawCode.toUpperCase());
     if (!room) return send(res, 404, { error: 'Room not found' });
     if (!action && req.method === 'GET') return send(res, 200, { room: roomView(room) });
+    if (action === 'chat' && req.method === 'GET') {
+      const playerId = String(url.searchParams.get('playerId') || '');
+      if (!room.started || !room.players.some((player) => player.id === playerId)) {
+        return send(res, 403, { error: 'Player is not active in this mission' });
+      }
+      return send(res, 200, { messages: (room.chatMessages ?? []).slice(-100) });
+    }
     if (action === 'voice' && req.method === 'GET') {
       const playerId = String(url.searchParams.get('playerId') || '');
       if (!room.started || !room.players.some((player) => player.id === playerId)) {
@@ -126,6 +133,19 @@ const server = createServer(async (req, res) => {
         room.events.push({ id: randomUUID(), type: 'day-advanced', day: room.currentDay, playerId: body.playerId, startedAt: room.dayStartedAt, at });
       }
       return send(res, 200, { room: roomView(room) });
+    }
+    if (action === 'chat' && req.method === 'POST') {
+      const player = room.players.find((entry) => entry.id === body.playerId);
+      if (!room.started || room.cancelled || room.finished || !player) {
+        return send(res, 403, { error: 'Player is not active in this mission' });
+      }
+      const messageText = String(body.message ?? '').trim().slice(0, 240);
+      if (!messageText) return send(res, 400, { error: 'Type a message first' });
+      const message = { id: randomUUID(), playerId: player.id, playerName: player.name, message: messageText, at: Date.now() };
+      room.chatMessages ??= [];
+      room.chatMessages.push(message);
+      if (room.chatMessages.length > 100) room.chatMessages.splice(0, room.chatMessages.length - 100);
+      return send(res, 201, { message });
     }
     if (action === 'tasks' && req.method === 'POST') {
       const player = room.players.find((entry) => entry.id === body.playerId);

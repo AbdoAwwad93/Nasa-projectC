@@ -4,6 +4,7 @@ import { Bounds, Center, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { getDailyTaskExperience, getDailyTaskSolutions } from '../../data/dailyTaskExperiences';
 import { getPlayerAddress } from '../../utils/playerAddress';
+import { playGameNotificationChime } from '../../utils/gameAudio';
 import './DailyTaskExperience.css';
 
 const STEPS = ['Task Idea', 'Discover Problem', 'Choose a Solution', 'Complete Task', 'Conclusion'];
@@ -151,24 +152,7 @@ export default function DailyTaskExperience({ task, commanderName, initialStage 
     if (problemFoundRef.current) return;
     problemFoundRef.current = true;
     setProblemFound(true);
-    try {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) return;
-      const context = new AudioContextClass();
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(660, context.currentTime);
-      oscillator.frequency.exponentialRampToValueAtTime(990, context.currentTime + 0.16);
-      gain.gain.setValueAtTime(0.0001, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.025);
-      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.24);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.25);
-      oscillator.onended = () => context.close();
-    } catch { /* Audio may be unavailable; discovery still completes. */ }
+    playGameNotificationChime();
   };
   const handleSolution = (solution) => {
     if (selectedOptionId) return;

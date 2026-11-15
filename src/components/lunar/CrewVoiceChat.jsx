@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchLocalNetwork } from '../../utils/localNetworkFetch';
+import { isGameSoundEnabled } from '../../utils/gameAudio';
 
 const VOICE_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -7,11 +8,12 @@ const VOICE_ICE_SERVERS = [
 ];
 
 export default function CrewVoiceChat({ apiBase, roomCode, playerId, enabled }) {
+  const initialSpeakerEnabled = isGameSoundEnabled();
   const peersRef = useRef(new Map());
   const micStreamRef = useRef(null);
-  const speakerEnabledRef = useRef(true);
+  const speakerEnabledRef = useRef(initialSpeakerEnabled);
   const [micEnabled, setMicEnabled] = useState(false);
-  const [speakerEnabled, setSpeakerEnabled] = useState(true);
+  const [speakerEnabled, setSpeakerEnabled] = useState(initialSpeakerEnabled);
   const [connectedCount, setConnectedCount] = useState(0);
   const [voiceError, setVoiceError] = useState('');
 

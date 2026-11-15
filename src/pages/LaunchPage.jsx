@@ -5,6 +5,7 @@ import IntroOverlay from '../components/space/Introoverlay';
 import MissionStoryIntro from '../components/MissionStoryIntro';
 import MultiplayerLobby from '../components/MultiplayerLobby';
 import OutpostTutorial from '../components/OutpostTutorial';
+import { disableGameSound, enableGameSound } from '../utils/gameAudio';
 import '../components/space/Ui.css';
 
 const preloadLunarOutpost = () => import('../components/lunar/LunarOutpost');
@@ -14,6 +15,7 @@ const LunarOutpost = lazy(preloadLunarOutpost);
 export default function LaunchPage({ simulation, onMissionStart }) {
   const [phase, setPhase] = useState('intro');
   const [introFinished, setIntroFinished] = useState(false);
+  const [soundChoice, setSoundChoice] = useState(null);
   const [commanderProfile, setCommanderProfile] = useState({ commanderName: 'Commander', baseName: 'Moonbase Alpha' });
   const [playMode, setPlayMode] = useState('single');
   const tutorialDecisionRef = useRef(null);
@@ -61,6 +63,16 @@ export default function LaunchPage({ simulation, onMissionStart }) {
     void handleLaunchMission('moon');
   }, [handleLaunchMission]);
 
+  const handleEnableSound = useCallback(() => {
+    enableGameSound();
+    setSoundChoice('enabled');
+  }, []);
+
+  const handleContinueMuted = useCallback(() => {
+    disableGameSound();
+    setSoundChoice('muted');
+  }, []);
+
   return (
     <div className="launch-root">
       {['preparing', 'tutorial', 'lunar'].includes(phase) ? (
@@ -81,6 +93,8 @@ export default function LaunchPage({ simulation, onMissionStart }) {
             visible={phase === 'intro'}
             finished={introFinished}
             onSequenceEnd={finishIntro}
+            soundChoice={soundChoice}
+            onSoundChoice={setSoundChoice}
           />
           {phase === 'intro' && (
             <IntroOverlay
@@ -106,6 +120,18 @@ export default function LaunchPage({ simulation, onMissionStart }) {
                 <button className="play-mode-back" onClick={() => setPhase('intro')}>Back</button>
               </div>
             </section>
+          )}
+          {phase === 'mode' && soundChoice === null && (
+            <div className="launch-sound-gate" role="dialog" aria-modal="true" aria-labelledby="launch-sound-title">
+              <section className="launch-sound-prompt launch-sound-prompt--gate">
+                <div>
+                  <strong id="launch-sound-title">Enable game sound?</strong>
+                  <span>Hear mission narration and game alerts.</span>
+                </div>
+                <button type="button" className="launch-sound-enable" onClick={handleEnableSound}>Enable sound</button>
+                <button type="button" className="launch-sound-muted" onClick={handleContinueMuted}>Continue muted</button>
+              </section>
+            </div>
           )}
           {phase === 'lobby' && playMode === 'multi' && (
             <MultiplayerLobby onStart={handleCrewReady} onRoomExit={handleRoomExit} />

@@ -4,11 +4,13 @@ import EventModal from '../EventModal';
 import EndGameReport from '../EndGameReport';
 import DailyTaskExperience from './DailyTaskExperience';
 import CrewVoiceChat from './CrewVoiceChat';
+import CrewTextChat from './CrewTextChat';
 import { getDailyTaskExperience } from '../../data/dailyTaskExperiences';
 import { getPlayerAddress } from '../../utils/playerAddress';
 import { getChapterReply, getEventNarration, getStoryCallback, LOCATION_STORY_CARDS, SCIENCE_DISCOVERIES, STORY_CHAPTERS, STORY_DAY_BEATS } from '../../data/missionStory';
 import { IceSampleActivity, MissionArchive, MissionStoryMoment, RadioCall } from '../MissionStoryPanels';
 import { createNoorSpeech } from '../../utils/missionVoice';
+import { playGameNotificationChime } from '../../utils/gameAudio';
 import MissionEventCall from './MissionEventCall';
 import MissionStoryReward from '../MissionStoryReward';
 import { fetchLocalNetwork } from '../../utils/localNetworkFetch';
@@ -44,6 +46,7 @@ function getCommanderSafety(resources) {
 }
 
 const MULTIPLAYER_API = (sessionStorage.getItem('lunar-room-api') || import.meta.env.VITE_MULTIPLAYER_API_URL || `http://${window.location.hostname}:3001`).replace(/\/$/, '');
+const CREW_POSITION_STALE_MS = 8000;
 const RESOURCE_LABELS = {
   power: 'Power', battery: 'Battery', oxygen: 'Oxygen', water: 'Water', food: 'Food',
   habitat: 'Crew safety', equipment: 'Crew safety', health: 'Crew safety',
@@ -89,27 +92,7 @@ function getTaskStartMessage(task) {
 }
 
 function playNarrationMessageChime() {
-  try {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return;
-    const context = new AudioContextClass();
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    const startAt = context.currentTime;
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(880, startAt);
-    oscillator.frequency.setValueAtTime(1046, startAt + 0.075);
-    gain.gain.setValueAtTime(0.0001, startAt);
-    gain.gain.exponentialRampToValueAtTime(0.035, startAt + 0.025);
-    gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.19);
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    const resumePromise = context.resume?.();
-    if (resumePromise) void resumePromise.catch(() => {});
-    oscillator.start(startAt);
-    oscillator.stop(startAt + 0.2);
-    oscillator.onended = () => { void context.close(); };
-  } catch { /* Keep the chat usable when audio is unavailable. */ }
+  playGameNotificationChime();
 }
 
 function getEventLocation(event) {
@@ -204,6 +187,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
 
   const [isLoading, setIsLoading] = useState(true);
   const [multiplayerHostId, setMultiplayerHostId] = useState(commanderProfile?.hostId);
+  const [crewChatOpen, setCrewChatOpen] = useState(false);
   const outpostControlsDisabled = isLoading || tutorialActive;
   const [cameraMode, setCameraMode] = useState('free');
   const [pointerLocked, setPointerLocked] = useState(false);
@@ -530,12 +514,19 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
           simulation.advanceDay();
         }
         engineRef.current?.setCrewRovers?.(room.rovers ?? [], commanderProfile.playerId);
-        const currentTime = Date.now();
-        const nextCrewPositions = room.players.filter((player) => (
+        // Position timestamps are created by the room server. Compare against
+        // its clock too, so a device with a skewed local clock doesn't hide the
+        // other crew members. The wider freshness window also tolerates mobile
+        // browsers throttling heartbeat timers in the background.
+        const roomTime = Number.isFinite(room.serverTime) ? room.serverTime : Date.now();
+        const nextCrewPositions = (room.players ?? []).filter((player) => (
           player.id !== commanderProfile.playerId
           && player.position
-          && currentTime - player.position.updatedAt < 2500
-        ));
+          && Number.isFinite(player.position.updatedAt)
+          && roomTime - player.position.updatedAt >= -1000
+          && roomTime - player.position.updatedAt < CREW_POSITION_STALE_MS
+          && [player.position.x, player.position.y, player.position.z, player.position.yaw].every(Number.isFinite)
+        )).sort((first, second) => first.id.localeCompare(second.id));
         setCrewPositions((current) => {
           const unchanged = current.length === nextCrewPositions.length && current.every((player, index) => (
             player.id === nextCrewPositions[index]?.id
@@ -1283,6 +1274,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     || radioOpen
     || Boolean(noorCall)
     || Boolean(simulation.warningTaskId)
+    || crewChatOpen
     || (simulation.dayPhase === 'report' && simulation.dayReport && dayReportReadyDay === simulation.dayReport.day && storyRewardDay === null)
     || simulation.gameStatus !== 'playing';
   const touchControlsVisible = showTouchControls
@@ -2001,6 +1993,17 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
               roomCode={commanderProfile.roomCode}
               playerId={commanderProfile.playerId}
               enabled={!tutorialMode && simulation.gameStatus === 'playing'}
+            />
+          )}
+          {commanderProfile?.multiplayer && commanderProfile?.roomCode && (
+            <CrewTextChat
+              apiBase={MULTIPLAYER_API}
+              roomCode={commanderProfile.roomCode}
+              playerId={commanderProfile.playerId}
+              playerName={simulation.commanderName}
+              enabled={!tutorialMode && simulation.gameStatus === 'playing'}
+              open={crewChatOpen}
+              onOpenChange={setCrewChatOpen}
             />
           )}
           {!insidePanel.visible && !isScienceNotebookOpen && (
