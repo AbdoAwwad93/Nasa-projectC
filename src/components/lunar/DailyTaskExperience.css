@@ -266,41 +266,43 @@
     overscroll-behavior: contain;
   }
   .daily-task-experience {
-    width: min(780px, 100%);
-    height: calc(100dvh - 16px);
+    width: min(720px, 100%);
+    height: auto;
     max-height: calc(100dvh - 16px);
-    padding: 12px 16px;
-    border-radius: 16px;
+    padding: 10px 14px;
+    border-radius: 14px;
   }
-  .daily-task-experience-close { top: 8px; right: 8px; width: 44px; height: 44px; }
-  .daily-task-experience-header { gap: 5px; padding-right: 48px; }
-  .daily-task-experience-kicker { font-size: .62rem; }
-  .daily-task-experience-header h2 { font-size: clamp(1rem, 3vw, 1.25rem); }
+  .daily-task-experience-close { top: 6px; right: 6px; width: 36px; height: 36px; font-size: 1.1rem; }
+  .daily-task-experience-header { gap: 4px; padding-right: 40px; }
+  .daily-task-experience-kicker { font-size: .58rem; }
+  .daily-task-experience-header h2 { font-size: clamp(.92rem, 2.6vw, 1.12rem); }
   .daily-task-step-list { gap: 4px; margin-top: 0; }
   .daily-task-step-list > span { gap: 4px; font-size: .58rem; }
   .daily-task-step-list > span b { flex-basis: 20px; width: 20px; height: 20px; font-size: .66rem; }
   .daily-task-step-list > span:not(:last-child)::after { top: 10px; left: 22px; }
-  .daily-task-guide { gap: 8px; margin-top: 8px; padding: 6px 9px; border-radius: 10px; }
-  .daily-task-guide p { font-size: .74rem; line-height: 1.3; }
-  .daily-task-buddy { flex-basis: 30px; width: 30px; height: 30px; }
-  .daily-task-stage { gap: 8px; margin-top: 10px; }
-  .daily-task-stage > p { font-size: .82rem; line-height: 1.4; }
+  .daily-task-guide { gap: 7px; margin-top: 6px; padding: 5px 8px; border-radius: 9px; }
+  .daily-task-guide p { font-size: .68rem; line-height: 1.25; }
+  .daily-task-buddy { flex-basis: 26px; width: 26px; height: 26px; }
+  .daily-task-stage { gap: 6px; margin-top: 7px; }
+  .daily-task-stage > p { font-size: .74rem; line-height: 1.32; }
   .daily-task-object-picture { gap: 2px; padding: 4px 8px; border-radius: 12px; }
   .daily-task-object-picture svg { width: min(160px, 100%); height: 80px; }
   .daily-task-object-picture > strong { font-size: .74rem; }
-  .daily-task-why-button { min-height: 44px; padding: 6px 10px; font-size: .75rem; }
+  .daily-task-why-button { min-height: 38px; padding: 5px 9px; font-size: .68rem; }
   .daily-task-discover-board { gap: 5px; padding: 7px 9px; border-radius: 12px; }
   .daily-task-discover-scene { width: min(100%, 380px); aspect-ratio: 2.7 / 1; }
   .daily-task-discover-board > span { font-size: .68rem; }
-  .daily-task-part-grid button { min-height: 48px; }
-  .daily-task-tool-grid { gap: 7px; }
-  .daily-task-tool-grid button { min-height: 100px; gap: 5px; padding: 8px 6px; }
-  .daily-task-option-icon { width: 42px; height: 42px; }
-  .daily-task-option-icon svg { width: 30px; height: 30px; }
-  .daily-task-tool-grid button strong { font-size: .74rem; }
-  .daily-task-solution-options button small { font-size: .68rem; line-height: 1.28; }
-  .daily-task-hold-button { min-height: 48px; border-radius: 12px; font-size: .86rem; }
-  .daily-task-primary { position: sticky; z-index: 3; bottom: 0; min-height: 48px; padding: 8px 14px; }
-  .daily-task-success-check { width: 52px; height: 52px; font-size: 2rem !important; }
-  .daily-task-fact-card { padding: 9px 11px; }
+  .daily-task-part-grid button { min-height: 40px; }
+  .daily-task-tool-grid { gap: 6px; }
+  .daily-task-tool-grid button { min-height: 82px; gap: 4px; padding: 6px 5px; }
+  .daily-task-option-icon { width: 34px; height: 34px; }
+  .daily-task-option-icon svg { width: 25px; height: 25px; }
+  .daily-task-tool-grid button strong { font-size: .68rem; }
+  .daily-task-solution-grid { gap: 6px; }
+  .daily-task-solution-grid > button { min-height: 96px; gap: 5px; padding: 8px; font-size: .72rem; }
+  .daily-task-solution-options button small { font-size: .64rem; line-height: 1.24; }
+  .daily-task-hold-button { min-height: 42px; border-radius: 10px; font-size: .78rem; }
+  .daily-task-primary { position: sticky; z-index: 3; bottom: 0; min-height: 42px; padding: 6px 11px; font-size: .74rem; }
+  .daily-task-success-check { width: 46px; height: 46px; font-size: 1.8rem !important; }
+  .daily-task-fact-card { padding: 8px 10px; }
 }

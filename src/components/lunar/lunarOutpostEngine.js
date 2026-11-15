@@ -4357,7 +4357,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
     // the drivetrain feels like it is pulling against the surface.
     const slopeFactor = THREE.MathUtils.clamp(1 - rover.climb * 0.9, 0.35, 1.5);
     const targetSpeed = driving
-      ? (throttleInput > 0 ? 8 : throttleInput < 0 ? -3 : 0) * slopeFactor
+      ? (throttleInput > 0 ? 8 * throttleInput : throttleInput < 0 ? 3 * throttleInput : 0) * slopeFactor
       : 0;
     rover.speed = THREE.MathUtils.damp(rover.speed, targetSpeed, driving && throttleInput ? 2.8 : 4.5, dt);
     rover.steering = THREE.MathUtils.damp(rover.steering, driving ? steerInput * 0.3 : 0, 9, dt);
@@ -5474,22 +5474,26 @@ export function createLunarEngine(canvas, callbacks = {}) {
       -1,
       1,
     );
-    camera.getWorldDirection(firstPersonForward).normalize();
-    firstPersonRight.set(Math.cos(firstPersonYaw), 0, Math.sin(firstPersonYaw));
+    // Walk on the ground plane using camera yaw only. Including the camera's
+    // pitch here made joystick movement weaken or skew when the player looked
+    // up/down; the old right vector also pointed the wrong way after turning.
+    firstPersonForward.set(-Math.sin(firstPersonYaw), 0, -Math.cos(firstPersonYaw));
+    firstPersonRight.set(Math.cos(firstPersonYaw), 0, -Math.sin(firstPersonYaw));
     firstPersonDirection.copy(firstPersonForward).multiplyScalar(forward).addScaledVector(firstPersonRight, side);
-    const wantsMove = firstPersonDirection.lengthSq() > 0;
-    if (wantsMove) firstPersonDirection.normalize();
+    const inputStrength = firstPersonDirection.length();
+    const moveStrength = Math.min(inputStrength, 1);
+    const wantsMove = moveStrength > 0.02;
+    if (inputStrength > 0) firstPersonDirection.multiplyScalar(1 / inputStrength);
 
     // Gait: identical acceleration and glide in every space. Shift runs, which
     // matters on the surface and keeps the feel consistent indoors.
     const touchMoving = Math.abs(touchMoveX) > 0.02 || Math.abs(touchMoveY) > 0.02;
-    const moveSpeed = touchSprinting
-      ? PLAYER_CAMERA.touchSprintSpeed
-      : touchMoving
-        ? PLAYER_CAMERA.touchWalkSpeed
-        : keys.has('shift') ? PLAYER_CAMERA.sprintSpeed : PLAYER_CAMERA.walkSpeed;
-    const desiredX = wantsMove ? firstPersonDirection.x * moveSpeed : 0;
-    const desiredZ = wantsMove ? firstPersonDirection.z * moveSpeed : 0;
+    const sprinting = touchSprinting || keys.has('shift');
+    const moveSpeed = touchMoving
+      ? sprinting ? PLAYER_CAMERA.touchSprintSpeed : PLAYER_CAMERA.touchWalkSpeed
+      : sprinting ? PLAYER_CAMERA.sprintSpeed : PLAYER_CAMERA.walkSpeed;
+    const desiredX = wantsMove ? firstPersonDirection.x * moveSpeed * moveStrength : 0;
+    const desiredZ = wantsMove ? firstPersonDirection.z * moveSpeed * moveStrength : 0;
     const rateStep = (wantsMove ? PLAYER_CAMERA.acceleration : PLAYER_CAMERA.deceleration) * dt;
     firstPersonVelocity.x = THREE.MathUtils.clamp(
       desiredX,

@@ -15,6 +15,17 @@ const TOUR = [
   { target: null, place: 'READY FOR LAUNCH', title: 'Your first day starts now', player: 'I think I’m ready. What happens next?', guide: 'Welcome! Are you ready to get started? Let’s begin our adventure together!' },
 ];
 
+const MOBILE_TOUR_GUIDES = {
+  'mission-status': 'Tap the mission strip to check the lunar day, remaining time, and outpost status.',
+  'live-map': 'Tap the live map panel to open the full map with task markers and destinations.',
+  'science-notebook': 'Tap the book icon to open your Science Notebook and read the discoveries we have saved.',
+  'photo-mode': 'Tap the camera icon to open your mission photo collection.',
+  'daily-jobs': 'Tap the clipboard icon to see today’s repairs and checks. Choose a job, then follow its marker.',
+  resources: 'Tap the chart icon to check power, oxygen, water, food, and crew safety.',
+  'walk-around': 'Tap the astronaut icon, move with the joystick on the left, and drag on the right side to look around.',
+  'drive-rover': 'Tap the rover icon. Push the joystick forward or back to drive and left or right to steer. Drag on the right side to look around.',
+};
+
 export default function OutpostTutorial({ onComplete }) {
   const [step, setStep] = useState(0);
   const [target, setTarget] = useState(null);
@@ -23,6 +34,8 @@ export default function OutpostTutorial({ onComplete }) {
   const [cardHeight, setCardHeight] = useState(390);
   const cardRef = useRef(null);
   const current = TOUR[step];
+  const compactLandscape = viewport.width > viewport.height && viewport.height <= 600;
+  const guideMessage = compactLandscape ? MOBILE_TOUR_GUIDES[current.target] ?? current.guide : current.guide;
 
   const finish = useCallback(() => onComplete(), [onComplete]);
 
@@ -69,9 +82,9 @@ export default function OutpostTutorial({ onComplete }) {
   useEffect(() => {
     if (!voiceEnabled || !('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') return undefined;
     window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(createNoorSpeech(current.guide));
+    window.speechSynthesis.speak(createNoorSpeech(guideMessage));
     return () => window.speechSynthesis.cancel();
-  }, [current.guide, voiceEnabled]);
+  }, [guideMessage, voiceEnabled]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -84,7 +97,8 @@ export default function OutpostTutorial({ onComplete }) {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [finish]);
 
-  const groupWidth = Math.min(410, viewport.width - 28);
+  const edgeInset = compactLandscape ? 8 : 14;
+  const groupWidth = Math.min(compactLandscape ? 450 : 410, viewport.width - edgeInset * 2);
   const activeTarget = current.target ? target : null;
   const safeCardHeight = Math.min(cardHeight, viewport.height * 0.76);
   const groupTop = activeTarget
@@ -94,14 +108,14 @@ export default function OutpostTutorial({ onComplete }) {
         const belowSpace = viewport.height - below - 12;
         const aboveSpace = activeTarget.y - 18;
         const preferred = belowSpace >= safeCardHeight || belowSpace >= aboveSpace ? below : above;
-        return Math.max(12, Math.min(viewport.height - safeCardHeight - 12, preferred));
+        return Math.max(edgeInset, Math.min(viewport.height - safeCardHeight - edgeInset, preferred));
       })()
-    : Math.max(12, (viewport.height - safeCardHeight) / 2);
+    : Math.max(edgeInset, (viewport.height - safeCardHeight) / 2);
   const groupLeft = activeTarget
-    ? Math.max(14, Math.min(viewport.width - groupWidth - 14, activeTarget.x + activeTarget.width / 2 - groupWidth / 2))
-    : Math.max(14, (viewport.width - groupWidth) / 2);
+    ? Math.max(edgeInset, Math.min(viewport.width - groupWidth - edgeInset, activeTarget.x + activeTarget.width / 2 - groupWidth / 2))
+    : Math.max(edgeInset, (viewport.width - groupWidth) / 2);
   const aperture = activeTarget ? 8 : 0;
-  const skipPosition = { right: 20, bottom: 20 };
+  const skipPosition = compactLandscape ? { right: 8, bottom: 8 } : { right: 20, bottom: 20 };
   const shieldPanels = activeTarget ? [
     { left: 0, top: 0, width: '100%', height: Math.max(0, activeTarget.y - aperture) },
     { left: 0, top: activeTarget.y + activeTarget.height + aperture, width: '100%', height: Math.max(0, viewport.height - activeTarget.y - activeTarget.height - aperture) },
@@ -121,17 +135,17 @@ export default function OutpostTutorial({ onComplete }) {
           <div className="tour-dialogue tour-player"><span>YOU</span><p>{current.player}</p></div>
           <div className="tour-guide-message">
             <MissionStoryAvatar />
-            <div className="tour-dialogue tour-guide"><span>DR. NOOR · MISSION CONTROL</span><p>{current.guide}</p></div>
+            <div className="tour-dialogue tour-guide"><span>DR. NOOR · MISSION CONTROL</span><p>{guideMessage}</p></div>
           </div>
           <div className="tour-actions">
-            <button type="button" className="tour-back" onClick={() => setStep((value) => Math.max(0, value - 1))} disabled={step === 0}>← Back</button>
+            <button type="button" className="tour-back" aria-label="Previous tutorial step" title="Previous step" onClick={() => setStep((value) => Math.max(0, value - 1))} disabled={step === 0}><span className="tour-button-label">Back</span><b aria-hidden="true">←</b></button>
             <div className="tour-progress" aria-label={`Tour step ${step + 1} of ${TOUR.length}`}>{TOUR.map((item, index) => <i key={item.target} className={index === step ? 'is-current' : index < step ? 'is-done' : ''} />)}</div>
-            <button type="button" className="tour-next" onClick={advance}>{step === TOUR.length - 1 ? 'Start exploring' : 'Next'} <span>→</span></button>
+            <button type="button" className="tour-next" aria-label={step === TOUR.length - 1 ? 'Start exploring' : 'Next tutorial step'} title={step === TOUR.length - 1 ? 'Start exploring' : 'Next step'} onClick={advance}><span className="tour-button-label">{step === TOUR.length - 1 ? 'Start exploring' : 'Next'}</span><b aria-hidden="true">→</b></button>
           </div>
-          <div className="tour-card-footer"><span>← → MOVE BETWEEN STOPS</span><button type="button" onClick={() => setVoiceEnabled((enabled) => !enabled)}>{voiceEnabled ? '🔊 Guide on' : '🔇 Guide off'}</button></div>
+          <div className="tour-card-footer"><span>← → MOVE BETWEEN STOPS</span><button type="button" aria-label={voiceEnabled ? 'Turn guide voice off' : 'Turn guide voice on'} title={voiceEnabled ? 'Turn guide voice off' : 'Turn guide voice on'} aria-pressed={voiceEnabled} onClick={() => setVoiceEnabled((enabled) => !enabled)}><span className="tour-voice-icon" aria-hidden="true">{voiceEnabled ? '🔊' : '🔇'}</span><span className="tour-voice-label">{voiceEnabled ? 'Guide on' : 'Guide off'}</span></button></div>
         </article>
       </section>
-      <header className="tour-topline" style={skipPosition}><button type="button" onClick={finish}>Skip tutorial <b>×</b></button></header>
+      <header className="tour-topline" style={skipPosition}><button type="button" aria-label="Skip tutorial" title="Skip tutorial" onClick={finish}><span className="tour-skip-label">Skip tutorial</span><b aria-hidden="true">×</b></button></header>
     </main>
   );
 }

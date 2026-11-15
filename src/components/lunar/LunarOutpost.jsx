@@ -258,18 +258,51 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     if (lookPointerRef.current !== null) return;
     event.preventDefault();
     event.stopPropagation();
-    lookPointerRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const pointer = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      target: event.currentTarget,
+      onMove: null,
+      onEnd: null,
+    };
+    pointer.onMove = (moveEvent) => {
+      if (lookPointerRef.current !== pointer || moveEvent.pointerId !== pointer.pointerId) return;
+      moveEvent.preventDefault();
+      engineRef.current?.lookTouch(moveEvent.clientX - pointer.x, moveEvent.clientY - pointer.y);
+      pointer.x = moveEvent.clientX;
+      pointer.y = moveEvent.clientY;
+    };
+    pointer.onEnd = (endEvent) => stopTouchLook(endEvent);
+    lookPointerRef.current = pointer;
+    window.addEventListener('pointermove', pointer.onMove, { passive: false });
+    window.addEventListener('pointerup', pointer.onEnd);
+    window.addEventListener('pointercancel', pointer.onEnd);
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Window-level listeners keep drag look working when pointer capture is
+      // missing or rejected by a mobile browser.
+    }
   };
-  const moveTouchLook = (event) => {
+  const clearTouchLook = () => {
     const pointer = lookPointerRef.current;
-    if (!pointer || pointer.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    engineRef.current?.lookTouch(event.clientX - pointer.x, event.clientY - pointer.y);
-    lookPointerRef.current = { ...pointer, x: event.clientX, y: event.clientY };
+    if (!pointer) return;
+    lookPointerRef.current = null;
+    window.removeEventListener('pointermove', pointer.onMove);
+    window.removeEventListener('pointerup', pointer.onEnd);
+    window.removeEventListener('pointercancel', pointer.onEnd);
+    try {
+      if (pointer.target.hasPointerCapture?.(pointer.pointerId)) {
+        pointer.target.releasePointerCapture(pointer.pointerId);
+      }
+    } catch {
+      // A browser may already have released the pointer during cancellation.
+    }
   };
   const stopTouchLook = (event) => {
-    if (lookPointerRef.current?.pointerId === event.pointerId) lookPointerRef.current = null;
+    if (lookPointerRef.current?.pointerId !== event.pointerId) return;
+    clearTouchLook();
   };
   const startTouchSprint = (event) => {
     if (sprintPointerRef.current !== null) return;
@@ -902,7 +935,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     engineRef.current?.setGameplaySuspended?.(isGameplayPortrait);
     if (isGameplayPortrait) {
       joystickPointerRef.current = null;
-      lookPointerRef.current = null;
+      clearTouchLook();
       engineRef.current?.setTouchMove?.(0, 0);
     }
   }, [isGameplayPortrait]);
@@ -1220,7 +1253,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
   useEffect(() => {
     if (showPlayerTouchActions && touchControlsVisible) return;
     joystickPointerRef.current = null;
-    lookPointerRef.current = null;
+    clearTouchLook();
     sprintPointerRef.current = null;
     setTouchSprintActive(false);
     engineRef.current?.setTouchSprint?.(false);
@@ -1695,7 +1728,6 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
             className="lunar-touch-zone"
             aria-label="Drag to look around"
             onPointerDown={startTouchLook}
-            onPointerMove={moveTouchLook}
             onPointerUp={stopTouchLook}
             onPointerCancel={stopTouchLook}
             onLostPointerCapture={stopTouchLook}
@@ -1722,6 +1754,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
                 type="button"
                 className="lunar-touch-action lunar-touch-jump"
                 aria-label="Jump"
+                title="Jump"
                 onPointerDown={jumpFromTouch}
                 onClick={(event) => {
                   if (event.detail === 0) engineRef.current?.jumpPlayer?.();
@@ -1734,6 +1767,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
                 type="button"
                 className={`lunar-touch-action lunar-touch-sprint${touchSprintActive ? ' is-active' : ''}`}
                 aria-label="Hold to sprint"
+                title="Hold to sprint"
                 aria-pressed={touchSprintActive}
                 onPointerDown={startTouchSprint}
                 onPointerUp={stopTouchSprint}
@@ -1813,15 +1847,20 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
 
         <div className="lunar-actions-group">
           {!insidePanel.visible && !isScienceNotebookOpen && (
-            <button type="button" className="lunar-story-archive-button" data-tour-target="science-notebook" disabled={outpostControlsDisabled} onClick={() => openMissionArchive('notebook')}>
-              Science Notebook <span>{simulation.scienceNotebookIds.length}/{SCIENCE_DISCOVERIES.length}</span>
+            <button type="button" className="lunar-story-archive-button" data-tour-target="science-notebook" aria-label={`Science notebook, ${simulation.scienceNotebookIds.length} of ${SCIENCE_DISCOVERIES.length} discoveries`} title="Science notebook" disabled={outpostControlsDisabled} onClick={() => openMissionArchive('notebook')}>
+              <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5c-2.2-2-5.5-2.3-9-1.5v13c3.5-.8 6.8-.5 9 1.5m0-13c2.2-2 5.5-2.3 9-1.5v13c-3.5-.8-6.8-.5-9 1.5M12 6.5v13" /><path d="M6.5 8.5c1.4-.2 2.5-.1 3.5.3m-3.5 3c1.4-.2 2.5-.1 3.5.3m7-3.6c1-.2 2.2-.2 3.5 0m-3.5 3c1-.2 2.2-.2 3.5 0" /></svg>
+              <span className="lunar-action-label">Science Notebook</span><span className="lunar-action-count">{simulation.scienceNotebookIds.length}/{SCIENCE_DISCOVERIES.length}</span>
             </button>
           )}
           {!insidePanel.visible && (
-            <button type="button" className="lunar-story-photo-button" data-tour-target="photo-mode" disabled={outpostControlsDisabled} onClick={() => openMissionArchive('photos')}>Photo Mode</button>
+            <button type="button" className="lunar-story-photo-button" data-tour-target="photo-mode" aria-label="Photo mode" title="Photo mode" disabled={outpostControlsDisabled} onClick={() => openMissionArchive('photos')}>
+              <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h4l2-3h6l2 3h4v11H3z" /><circle cx="12" cy="13.5" r="3.5" /><path d="M18 10h.01" /></svg><span className="lunar-action-label">Photo Mode</span>
+            </button>
           )}
           {!insidePanel.visible && roverCameraActive && simulation.day >= 12 && (
-            <button type="button" className="lunar-story-sample-button" disabled={outpostControlsDisabled} onClick={() => setIceSampleOpen(true)}>Collect Sample</button>
+            <button type="button" className="lunar-story-sample-button" aria-label="Collect sample" title="Collect sample" disabled={outpostControlsDisabled} onClick={() => setIceSampleOpen(true)}>
+              <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h9.6a2 2 0 0 0 1.7-3l-5-9V3M8 15h8" /></svg><span className="lunar-action-label">Collect Sample</span>
+            </button>
           )}
           {!insidePanel.visible && activeEventEntries.length > 0 && (
             <div className="lunar-event-alert-menu-anchor" ref={eventAlertMenuRef}>
@@ -1831,11 +1870,14 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
                 aria-expanded={eventAlertListOpen}
                 aria-haspopup="true"
                 aria-controls="lunar-active-event-list"
+                aria-label={`${activeEventEntries.length} active outpost problems`}
+                title="Active outpost problems"
                 disabled={outpostControlsDisabled}
                 onClick={() => setEventAlertListOpen((open) => !open)}
               >
                 <span className="lunar-event-alert-pulse" aria-hidden="true" />
-                {activeEventEntries.length} {activeEventEntries.length === 1 ? 'Problem' : 'Problems'}
+                <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4l2-2Zm4 5h4" /><path d="M12 8v4m0 2.5h.01M12 2V1m-8 4 2 2m14-2-2 2" /></svg>
+                <span className="lunar-action-label">{activeEventEntries.length === 1 ? 'Problem' : 'Problems'}</span><span className="lunar-action-count">{activeEventEntries.length}</span>
               </button>
               {eventAlertListOpen && (
                 <div className="lunar-event-alert-dropdown" id="lunar-active-event-list" role="status" aria-label="Active events">
@@ -1872,10 +1914,12 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
                 data-tour-target="daily-jobs"
                 aria-expanded={dailyTasksOpen}
                 aria-controls="lunar-daily-tasks"
+                aria-label="Today’s jobs"
+                title="Today’s jobs"
                 disabled={outpostControlsDisabled || simulation.gameStatus !== 'playing' || simulation.dayPhase !== 'active'}
                 onClick={() => setDailyTasksOpen((open) => !open)}
               >
-                Today’s jobs
+                <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H5v17h14V4h-3M9 3h6v4H9z" /><path d="m8 12 1.5 1.5L12 11m2 1h3m-9 5 1.5 1.5L12 16m2 1h3" /></svg><span className="lunar-action-label">Today’s jobs</span>
               </button>
               <button
                 type="button"
@@ -1883,30 +1927,33 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
                 data-tour-target="resources"
                 aria-expanded={statusOpen}
                 aria-controls="lunar-status-drawer"
+                aria-label="Resources"
+                title="Resources"
                 disabled={outpostControlsDisabled || simulation.dayPhase !== 'active'}
                 onClick={() => setStatusOpen((open) => !open)}
               >
-                 Resources
+                <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5m0 14h16" /><path d="M7 16v-4m4 4V8m4 8v-6m4 6v-9" /><path d="M6 6h.01" /></svg><span className="lunar-action-label">Resources</span>
               </button>
             </>
           )}
           {insidePanel.visible ? (
             <div className="lunar-inside-panel">
               <span className="lunar-inside-panel-title">LOCATION CONTROLS</span>
-              <button type="button" className="lunar-component-action-button" disabled={outpostControlsDisabled} onClick={() => engineRef.current?.exitAirlock()}>
-                {insidePanel.buttonText || 'EXIT'}
+              <button type="button" className="lunar-component-action-button" aria-label={insidePanel.buttonText || 'Exit location'} title={insidePanel.buttonText || 'Exit location'} disabled={outpostControlsDisabled} onClick={() => engineRef.current?.exitAirlock()}>
+                <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h10v18H4zM14 12h7m-3-3 3 3-3 3" /></svg><span className="lunar-action-label">{insidePanel.buttonText || 'EXIT'}</span>
               </button>
               <button
                 type="button"
                 className={`lunar-component-action-button ${consoleEdit ? 'active' : ''}`}
-                title="Move / resize the task console"
+                title={consoleEdit ? 'Finish moving the task console' : 'Move / resize the task console'}
+                aria-label={consoleEdit ? 'Done moving the task console' : 'Move the task console'}
                 disabled={outpostControlsDisabled}
                 onClick={() => setConsoleEdit((editing) => !editing)}
               >
-                {consoleEdit ? 'DONE' : 'MOVE'}
+                <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true">{consoleEdit ? <><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5L16.5 9" /></> : <path d="M12 8V3m0 0L9 6m3-3 3 3m-3 10v5m0 0-3-3m3 3 3-3M8 12H3m0 0 3-3m-3 3 3 3m10-3h5m0 0-3-3m3 3-3 3" />}</svg><span className="lunar-action-label">{consoleEdit ? 'DONE' : 'MOVE'}</span>
               </button>
-              <button type="button" className="lunar-component-action-button lunar-component-photo-button" data-tour-target="photo-mode" disabled={outpostControlsDisabled} onClick={() => openMissionArchive('photos')}>
-                Photo Mode
+              <button type="button" className="lunar-component-action-button lunar-component-photo-button" data-tour-target="photo-mode" aria-label="Photo mode" title="Photo mode" disabled={outpostControlsDisabled} onClick={() => openMissionArchive('photos')}>
+                <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h4l2-3h6l2 3h4v11H3z" /><circle cx="12" cy="13.5" r="3.5" /><path d="M18 10h.01" /></svg><span className="lunar-action-label">Photo Mode</span>
               </button>
             </div>
           ) : (
@@ -1915,16 +1962,19 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
                 type="button"
                 className={`lunar-btn ${cameraMode === 'first-person' ? 'active' : ''}`}
                 data-tour-target="walk-around"
+                aria-label={cameraMode === 'free' ? 'Walk around' : 'Look around'}
+                title={cameraMode === 'free' ? 'Walk around' : 'Look around'}
                 disabled={outpostControlsDisabled || roverCameraActive || !['idle', 'awaitingDecision'].includes(simulation.eventPhase) || simulation.gameStatus !== 'playing'}
                 onClick={() => engineRef.current?.toggleCameraMode()}
               >
-                {cameraMode === 'free' ? 'Walk around' : 'Look around'}
+                <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true">{cameraMode === 'free' ? <><circle cx="12" cy="5" r="2.5" /><path d="m9 10-3 4m3-4 3 3 4 1m-7-4-1 8m4-5 3 7m-6-2h-3m9 2h3" /></> : <><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" /><circle cx="12" cy="12" r="2.5" /></>}</svg><span className="lunar-action-label">{cameraMode === 'free' ? 'Walk around' : 'Look around'}</span>
               </button>
               <button
                 type="button"
                 className={`lunar-btn ${roverCameraActive ? 'active' : ''}`}
                 data-tour-target="drive-rover"
                 aria-pressed={roverCameraActive}
+                aria-label={roverCameraActive ? 'Return to player view' : 'Drive rover'}
                 disabled={outpostControlsDisabled || (!roverCameraActive && (!roverReady || cameraMode === 'interior' || !eventGameplayActive || simulation.gameStatus !== 'playing'))}
                 onClick={() => engineRef.current?.toggleRoverCamera()}
                 title={
@@ -1935,9 +1985,9 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
                     : 'Switch between player view and rover follow camera'
                 }
               >
-                {roverCameraActive
+                <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true">{roverCameraActive ? <><path d="M8 6H4m0 0 3-3M4 6l3 3" /><circle cx="15" cy="8" r="2" /><path d="M11 18c.5-3.5 7.5-3.5 8 0" /></> : <><path d="M5 10h14l2 5H3l2-5Zm-1 5v3h16v-3M7 18v2m10-2v2" /><rect x="8" y="5" width="8" height="5" rx=".5" /><path d="M10 6.5h4m-4 2h4M5 10 3.5 8M19 10l1.5-2" /><circle cx="7" cy="18" r="1" /><circle cx="17" cy="18" r="1" /></>}</svg><span className="lunar-action-label">{roverCameraActive
                   ? (roverLink?.remote ? 'Back to base' : `Back to ${getPlayerAddress(simulation.commanderName)}`)
-                  : roverReady ? 'Drive rover' : 'Rover getting ready'}
+                  : roverReady ? 'Drive rover' : 'Rover getting ready'}</span>
               </button>
             </>
           )}
