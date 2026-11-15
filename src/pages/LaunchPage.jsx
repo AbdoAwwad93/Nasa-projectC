@@ -11,30 +11,21 @@ const preloadLunarOutpost = () => import('../components/lunar/LunarOutpost');
 const LunarOutpost = lazy(preloadLunarOutpost);
 
 // Single player phases include the outpost tutorial; multiplayer launches directly from the crew lobby.
-export default function LaunchPage({ simulation, onMissionStart, onMissionPause }) {
+export default function LaunchPage({ simulation, onMissionStart }) {
   const [phase, setPhase] = useState('intro');
   const [introFinished, setIntroFinished] = useState(false);
   const [commanderProfile, setCommanderProfile] = useState({ commanderName: 'Commander', baseName: 'Moonbase Alpha' });
-  const [resumeMissionId, setResumeMissionId] = useState(null);
   const [playMode, setPlayMode] = useState('single');
   const tutorialDecisionRef = useRef(null);
   tutorialDecisionRef.current = { phase };
 
   const finishIntro = useCallback(() => setIntroFinished(true), []);
 
-  const handleLaunchMission = useCallback(async (id) => {
+  const handleLaunchMission = useCallback((id) => {
     if (id !== 'moon') return;
-
-    if (resumeMissionId === id) {
-      await preloadLunarOutpost();
-      setCommanderProfile({ commanderName: simulation.commanderName, baseName: simulation.baseName });
-      setPhase('tutorial');
-    } else {
-      void preloadLunarOutpost();
-      setPhase('mode');
-    }
-    setResumeMissionId(null);
-  }, [resumeMissionId, simulation.baseName, simulation.commanderName]);
+    void preloadLunarOutpost();
+    setPhase('mode');
+  }, []);
 
   const handleStart = useCallback(() => {
     void handleLaunchMission('moon');
@@ -70,18 +61,11 @@ export default function LaunchPage({ simulation, onMissionStart, onMissionPause 
     void handleLaunchMission('moon');
   }, [handleLaunchMission]);
 
-  const handleExitToOrbit = useCallback(() => {
-    setResumeMissionId('moon');
-    onMissionPause?.();
-    setPhase('intro');
-  }, [onMissionPause]);
-
   return (
     <div className="launch-root">
       {['preparing', 'tutorial', 'lunar'].includes(phase) ? (
         <Suspense fallback={null}>
           <LunarOutpost
-            onExitToOrbit={handleExitToOrbit}
             simulation={simulation}
             commanderProfile={commanderProfile}
             tutorialMode={phase !== 'lunar'}
@@ -104,7 +88,6 @@ export default function LaunchPage({ simulation, onMissionStart, onMissionPause 
               finished={introFinished}
               onSkip={handleSkip}
               onStart={handleStart}
-              startLabel={resumeMissionId === 'moon' ? 'Resume Moon mission' : 'Start Moon mission'}
             />
           )}
           {phase === 'briefing' && <MissionStoryIntro onBegin={beginMission} />}

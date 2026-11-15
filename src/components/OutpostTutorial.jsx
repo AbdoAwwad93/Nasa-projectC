@@ -4,7 +4,6 @@ import { createNoorSpeech } from '../utils/missionVoice';
 import './OutpostTutorial.css';
 
 const TOUR = [
-  { target: 'mission-control', place: 'MISSION CONTROL', title: 'Your way back to mission selection', player: 'What does this button do?', guide: 'This takes you back to the mission selection screen. Your outpost will be here when you return.' },
   { target: 'mission-status', place: 'MISSION STATUS', title: 'Read the lunar mission clock', player: 'What are all these numbers?', guide: 'This strip shows the current lunar day, time left in the day, Moon time, days remaining, and the outpost readiness status.' },
   { target: 'live-map', place: 'LIVE MAP', title: 'See where everything is', player: 'How do I find a module or task?', guide: 'The live map shows the outpost layout and where you are. Activate it or press M for the full map with task markers and destinations.' },
   { target: 'science-notebook', place: 'SCIENCE NOTEBOOK', title: 'Keep every discovery', player: 'Where does our science go?', guide: 'New discoveries are saved in your Science Notebook. The number shows how many we have found so far. Open it to read our research.' },

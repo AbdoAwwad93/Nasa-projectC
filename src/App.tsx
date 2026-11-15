@@ -14,7 +14,6 @@ export default function App() {
         simulation.setMissionProfile(profile);
         setMissionActive(true);
       }}
-      onMissionPause={() => setMissionActive(false)}
     />
   );
 }

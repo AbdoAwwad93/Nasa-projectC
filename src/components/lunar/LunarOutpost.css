@@ -977,6 +977,11 @@
   fill: #ff7777;
 }
 
+.lunar-map-task-marker.status-missed .lunar-map-task-dot {
+  fill: #ff7777;
+  stroke: #ffd0d0;
+}
+
 .lunar-map-task-marker.status-completed .lunar-map-task-dot {
   fill: #9cdda1;
 }
@@ -1227,6 +1232,7 @@
 .lunar-map-legend .legend-available { background: #64b9ff; }
 .lunar-map-legend .legend-progress { background: #57efda; }
 .lunar-map-legend .legend-overdue { background: #ff7777; }
+.lunar-map-legend .legend-missed { background: #ff7777; }
 .lunar-map-legend .legend-completed { background: #9cdda1; }
 .lunar-map-legend .legend-equipment {
   border-radius: 2px;
@@ -3745,8 +3751,8 @@
 @media (orientation: landscape) and (max-width: 1024px) and (max-height: 600px) {
   .lunar-root .lunar-hud-clean {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-areas: "back status" "actions actions";
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "status" "actions";
     align-items: start;
     column-gap: 8px;
     row-gap: 4px;
@@ -3754,7 +3760,6 @@
     left: max(8px, env(safe-area-inset-left));
     right: max(8px, env(safe-area-inset-right));
   }
-  .lunar-root .lunar-hud-clean > .lunar-orbit-btn { grid-area: back; min-height: 44px; padding: 5px 9px; }
   .lunar-root .lunar-mission-status {
     grid-area: status;
     order: initial;

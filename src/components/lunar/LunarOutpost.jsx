@@ -124,10 +124,14 @@ function getSystemConditionLevel(value) {
   return 'healthy';
 }
 
-function getTaskStatusLabel(status) {
-  if (status === 'inProgress') return 'Started';
-  if (status === 'completed') return 'Done';
-  if (status === 'overdue') return 'Late';
+function isCriticalTaskMissed(task) {
+  return task?.priority === 'critical' && task.status === 'overdue';
+}
+
+function getTaskStatusLabel(task) {
+  if (task.status === 'inProgress') return 'Started';
+  if (task.status === 'completed') return 'Done';
+  if (task.status === 'overdue') return isCriticalTaskMissed(task) ? 'Missed' : 'Late';
   return 'Ready';
 }
 
@@ -174,7 +178,7 @@ function snapshotsMatch(current, next) {
   return true;
 }
 
-export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfile, tutorialMode = false, tutorialActive = false, onInitialCameraSettled }) {
+export default function LunarOutpost({ simulation, commanderProfile, tutorialMode = false, tutorialActive = false, onInitialCameraSettled }) {
   const containerRef = useRef(null);
   const engineRef = useRef(null);
   const presentedEventRef = useRef(null);
@@ -190,7 +194,8 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
   const setSceneReady = simulation.setSceneReady;
   const visibleNotifications = simulation.eventFailureNotices
     .filter((notice) => notice.day <= simulation.day);
-  const isPersistentCriticalFeedback = simulation.challengeFeedback?.startsWith('Initial deadline missed');
+  const isPersistentCriticalFeedback = simulation.challengeFeedback?.startsWith('Initial deadline missed')
+    || simulation.challengeFeedback?.includes(' is missed.');
   const visibleTaskFailureNotices = simulation.taskFailureNotices ?? [];
   const visibleEndOfDayNotices = simulation.endOfDayNoticeHistory.filter((event) => (
     simulation.endOfDayNoticePresentationIds.includes(getEventOccurrenceKey(event))
@@ -711,9 +716,6 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
     setPhotos((items) => [{ ...photo, caption: photo.caption.trim() }, ...items]);
     setPendingPhoto(null);
   };
-  const saveAndExitToMissionControl = () => {
-    onExitToOrbit?.();
-  };
   const showTaskLocation = (challengeId) => {
     const challenge = simulation.dailyChallenges.find((task) => task.id === challengeId);
     if (!challenge) return;
@@ -728,7 +730,8 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
   const insideComponentTasks = insidePanel.componentId
     ? simulation.dailyChallenges.filter(
         (challenge) => challenge.targetComponentId === insidePanel.componentId
-          && (challenge.status === 'available' || challenge.status === 'inProgress' || challenge.status === 'overdue'),
+          && (challenge.status === 'available' || challenge.status === 'inProgress'
+            || (challenge.status === 'overdue' && !isCriticalTaskMissed(challenge))),
       )
     : [];
   const closestTaskMarker = [...taskMarkerTargets].sort((a, b) => a.distance - b.distance)[0] ?? null;
@@ -737,16 +740,7 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
     ? simulation.dailyChallenges.find((task) => task.id === nearbyTaskMarker.taskId)
     : null;
   const activateNearbyTask = useCallback((challenge) => {
-    if (challenge.recoveryStatus === 'available') {
-      simulation.startCriticalTaskRecovery(challenge.id);
-      setTaskJourneys((items) => { const next = { ...items }; delete next[challenge.id]; return next; });
-      const retryMessage = `Let’s try this critical task again at ${challenge.targetComponentName}. We have 45 seconds to finish it!`;
-      setNarrationMilestoneMessage(retryMessage);
-      speakNarration(retryMessage);
-      setTaskExperienceId(challenge.id);
-      setTaskExperienceStage('solutions');
-      return;
-    }
+    if (isCriticalTaskMissed(challenge)) return;
     if (challenge.status === 'available') {
       stopDayOpeningQueue();
       simulation.startDailyChallenge(challenge.id);
@@ -758,7 +752,7 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
       return;
     }
     openTaskAtLocation(challenge.id);
-  }, [openTaskAtLocation, simulation.startCriticalTaskRecovery, simulation.startDailyChallenge, speakNarration, stopDayOpeningQueue]);
+  }, [openTaskAtLocation, simulation.startDailyChallenge, speakNarration, stopDayOpeningQueue]);
   const taskMarkerSignature = insideComponentTasks
     .map((task) => `${task.id}:${task.status}:${task.recoveryStatus ?? ''}`)
     .join('|');
@@ -795,12 +789,14 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
   ]);
   const promptedChallenge = simulation.dailyChallenges.find(
     (challenge) => (challenge.status === 'available' || challenge.status === 'inProgress' || challenge.status === 'overdue')
+      && !isCriticalTaskMissed(challenge)
       && challenge.targetComponentId === prompt.data?.id,
   );
   // The plant reports its own prompt id, so its active task is matched on the
   // component instead of the prompt id.
   const plantChallenge = simulation.dailyChallenges.find(
     (challenge) => (challenge.status === 'inProgress' || challenge.status === 'overdue')
+      && !isCriticalTaskMissed(challenge)
       && challenge.targetComponentId === '025',
   );
   const taskActionRef = useRef(null);
@@ -809,9 +805,11 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
       ? simulation.dailyChallenges.find((entry) => entry.id === taskId)
       : simulation.dailyChallenges.find(
         (entry) => (entry.status === 'inProgress' || entry.status === 'overdue')
+          && !isCriticalTaskMissed(entry)
           && entry.targetComponentId === componentId,
       );
-    if (challenge && (challenge.status === 'inProgress' || challenge.status === 'overdue')) {
+    if (challenge && (challenge.status === 'inProgress' || challenge.status === 'overdue')
+      && !isCriticalTaskMissed(challenge)) {
       openTaskAtLocation(challenge.id);
     }
   };
@@ -954,7 +952,8 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
       return undefined;
     }
     const allowedTaskIds = new Set(simulation.dailyChallenges
-      .filter((task) => task.status === 'inProgress' || task.status === 'overdue')
+      .filter((task) => (task.status === 'inProgress' || task.status === 'overdue')
+        && !isCriticalTaskMissed(task))
       .map((task) => task.id));
     if (insidePanel.componentId) insideComponentTasks.forEach((task) => allowedTaskIds.add(task.id));
     if (allowedTaskIds.size === 0) {
@@ -1255,7 +1254,8 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
   ) / systemEntries.length;
   const overdueTasks = simulation.dailyChallenges.filter((task) => task.status === 'overdue');
   const activeTask = simulation.dailyChallenges.find(
-    (task) => task.status === 'inProgress' || task.status === 'overdue',
+    (task) => (task.status === 'inProgress' || task.status === 'overdue')
+      && !isCriticalTaskMissed(task),
   );
   const vitalRisk = simulation.resources.power <= 20
     || simulation.resources.oxygen <= 20
@@ -1284,8 +1284,12 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
   const matchingSystemTask = simulation.dailyChallenges.find(
     (task) => task.affectedSystem === lowestSystem[0] && task.status !== 'completed',
   );
-  const readinessRecommendation = overdueTasks[0]
-    ? `Try the late job again: ${overdueTasks[0].title}.`
+  const retryableOverdueTask = overdueTasks.find((task) => !isCriticalTaskMissed(task));
+  const missedCriticalTask = overdueTasks.find(isCriticalTaskMissed);
+  const readinessRecommendation = retryableOverdueTask
+    ? `Try the late job again: ${retryableOverdueTask.title}.`
+    : missedCriticalTask
+      ? `${missedCriticalTask.title} was missed. Its resource penalties have been applied.`
     : vitalRisk
       ? 'Help save power, air, and water. Start with an important job.'
       : matchingSystemTask
@@ -1341,7 +1345,7 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
       !announcedFailureNoticesRef.current.has(`task:${notice.id}`)
     )).forEach((notice) => {
       announcedFailureNoticesRef.current.add(`task:${notice.id}`);
-      const message = `We ran out of time for that critical task. That’s okay—let’s try again!`;
+      const message = `${notice.task} was missed. Its resource penalties have been applied.`;
       setNarrationMilestoneMessage(message);
       speakNarration(message, undefined, true);
     });
@@ -1695,21 +1699,8 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
         <div className="lunar-crosshair" />
       )}
 
-      {/* Clean HUD: Mission Control & Camera Mode Toggle */}
+      {/* Mission status and camera controls */}
       <div className="lunar-hud-clean">
-        {onExitToOrbit && !insidePanel.visible && (
-          <button
-            type="button"
-            className="lunar-orbit-btn"
-            data-tour-target="mission-control"
-            disabled={outpostControlsDisabled}
-            onClick={saveAndExitToMissionControl}
-            title="Return to Mission Control"
-          >
-            <span>←</span> BACK
-          </button>
-        )}
-
         <div className="lunar-mission-status" aria-live="polite" data-tour-target="mission-status">
           <span className="lunar-status-dot" />
           <span>Day {simulation.day} of {simulation.maxDays}</span>
@@ -1868,7 +1859,6 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
       {simulation.dayPhase === 'active' && (
         simulation.dailyChallenges.some((task) => (
           (task.status === 'inProgress' && task.urgentDeadlineAtMs !== null)
-          || (task.recoveryStatus === 'active' && task.recoveryDeadlineAtMs !== null)
         )) || activeEventEntries.some(({ deadlineAtMs }) => deadlineAtMs !== null)
       ) && (
         <aside className={`lunar-countdown-panel${statusOpen ? ' is-status-open' : ''}${simulation.currentEvent?.triggerSource === 'task' ? ' is-task-event' : ''}`} aria-label="Active task and event timers">
@@ -1889,25 +1879,6 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                 <span className="lunar-countdown-title">{task.title}</span>
                 <strong className="lunar-countdown-time">
                   {formatRemainingTime(Math.max(0, task.urgentDeadlineAtMs - simulation.campaignElapsedMs))}
-                </strong>
-              </button>
-            ))}
-          {simulation.dailyChallenges
-            .filter((task) => task.recoveryStatus === 'active' && task.recoveryDeadlineAtMs !== null)
-            .map((task) => (
-              <button
-                type="button"
-                className="lunar-countdown-item lunar-countdown-task"
-                key={`recovery-${task.id}`}
-                onClick={() => {
-                  setFocusedTaskId(task.id);
-                  setDailyTasksOpen(true);
-                }}
-              >
-                <span className="lunar-countdown-kind">Try-again job</span>
-                <span className="lunar-countdown-title">{task.title}</span>
-                <strong className="lunar-countdown-time">
-                  {formatRemainingTime(Math.max(0, task.recoveryDeadlineAtMs - simulation.campaignElapsedMs))}
                 </strong>
               </button>
             ))}
@@ -2034,7 +2005,8 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
               const height = Math.max(component.maxZ - component.minZ, miniSpan * 0.035);
               const task = simulation.dailyChallenges.find(
                 (challenge) => challenge.targetComponentId === component.id
-                  && (challenge.status === 'inProgress' || challenge.status === 'overdue'),
+                  && (challenge.status === 'inProgress' || challenge.status === 'overdue')
+                  && !isCriticalTaskMissed(challenge),
               );
               const eventsAtComponent = activeEventEntries.filter(({ event }) => (
                 getEventLocation(event)?.componentId === component.id
@@ -2190,6 +2162,7 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                       const task = simulation.dailyChallenges.find(
                         (challenge) => challenge.targetComponentId === component.id,
                       );
+                      const taskMissed = isCriticalTaskMissed(task);
                       const taskOverdue = task?.status === 'overdue';
 
                       return (
@@ -2239,7 +2212,7 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                           )}
                           {task && (
                             <g
-                              className={`lunar-map-task-marker status-${taskOverdue ? 'overdue' : task.status}`}
+                              className={`lunar-map-task-marker status-${taskMissed ? 'missed' : taskOverdue ? 'overdue' : task.status}`}
                               onClick={() => {
                                 setSelectedMapTaskId(task.id);
                                 setSelectedMapComponentId(component.id);
@@ -2252,7 +2225,7 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                                 }
                               }}
                               role="button"
-                              aria-label={`${task.title}, ${taskOverdue ? 'overdue' : task.status}, ${component.name}`}
+                              aria-label={`${task.title}, ${taskMissed ? 'missed' : taskOverdue ? 'overdue' : task.status}, ${component.name}`}
                               tabIndex={0}
                             >
                               <circle cx={x} cy={y} r={mapSpan * 0.023} className="lunar-map-task-halo" />
@@ -2370,7 +2343,8 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                   <span><i className="legend-structure" /> Command center</span>
                   <span><i className="legend-task legend-available" /> Available task</span>
                   <span><i className="legend-task legend-progress" /> In progress</span>
-                  <span><i className="legend-task legend-overdue" /> Overdue (still completable)</span>
+                  <span><i className="legend-task legend-overdue" /> Late job (still completable)</span>
+                  <span><i className="legend-task legend-missed" /> Critical job missed</span>
                   <span><i className="legend-task legend-completed" /> Completed</span>
                   <span><i className="legend-equipment" /> Equipment</span>
                 </div>
@@ -2414,22 +2388,26 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
               || (first.priority === 'critical' ? -1 : 0) - (second.priority === 'critical' ? -1 : 0)
               || (first.priority === 'high' ? -1 : 0) - (second.priority === 'high' ? -1 : 0)
             )).map((challenge) => {
-              const isActive = challenge.status === 'inProgress' || challenge.status === 'overdue';
+              const isMissed = isCriticalTaskMissed(challenge);
+              const isActive = challenge.status === 'inProgress'
+                || (challenge.status === 'overdue' && !isMissed);
               const isUnfinished = challenge.status !== 'completed';
 
               return (
                 <article id={`lunar-task-${challenge.id}`} className={`lunar-task-card lunar-task-${challenge.status}${focusedTaskId === challenge.id ? ' is-focused' : ''}`} key={challenge.id}>
                   <div className="lunar-task-title-row">
                     <h3>{challenge.title}</h3>
-                    <span>{getTaskStatusLabel(challenge.status)}</span>
+                    <span>{getTaskStatusLabel(challenge)}</span>
                   </div>
                   <div className="lunar-task-meta">
                     <span className={`lunar-task-priority lunar-task-priority-${challenge.priority}`}>
-                      {challenge.priority === 'critical' ? 'Do this first' : challenge.priority === 'high' ? 'Important' : 'When you can'}
+                      {challenge.priority === 'critical'
+                        ? isMissed ? 'Missed critical task' : 'Do this first'
+                        : challenge.priority === 'high' ? 'Important' : 'When you can'}
                     </span>
                   <span>Go to: {challenge.targetComponentName}</span>
                     <span>{challenge.status === 'overdue'
-                      ? `Late since day ${challenge.scheduledDay}`
+                      ? isMissed ? `Missed · deadline was Day ${challenge.deadlineDay}` : `Late since day ${challenge.scheduledDay}`
                       : challenge.scheduledDay < simulation.day
                         ? `From day ${challenge.scheduledDay}`
                         : 'Due today'}</span>
@@ -2444,7 +2422,7 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                       {challenge.priority === 'critical' ? 'Start Task' : 'Start task'}
                     </button>
                   )}
-                  {isActive && challenge.recoveryStatus !== 'available' && (
+                  {isActive && (
                     <button
                       type="button"
                       className="lunar-task-action"
@@ -2455,26 +2433,7 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                       {simulation.activeChallengeId === challenge.id ? 'Working on this' : 'Choose this job'}
                     </button>
                   )}
-                  {challenge.status === 'overdue' && challenge.recoveryStatus === 'available' && (
-                    <button
-                      type="button"
-                      className="lunar-task-action"
-                      onClick={() => {
-                        simulation.startCriticalTaskRecovery(challenge.id);
-                        setTaskJourneys((items) => { const next = { ...items }; delete next[challenge.id]; return next; });
-                        const retryMessage = `Let’s try this critical task again at ${challenge.targetComponentName}. We have 45 seconds to finish it!`;
-                        setNarrationMilestoneMessage(retryMessage);
-                        speakNarration(retryMessage);
-                        setTaskExperienceId(challenge.id);
-                        setTaskExperienceStage('idea');
-                      }}
-                    >
-                      Try again
-                    </button>
-                  )}
-                  {challenge.status === 'overdue' && challenge.recoveryStatus !== 'available'
-                    && challenge.recoveryStatus !== 'active'
-                    && challenge.recoveryStatus !== 'expired' && (
+                  {challenge.status === 'overdue' && !isMissed && (
                     <button
                       type="button"
                       className="lunar-task-action"
@@ -2485,28 +2444,19 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                     <div className={`lunar-task-countdown ${
                       challenge.status === 'overdue' ? 'is-overdue' : ''
                     } ${
-                      challenge.recoveryStatus === 'active'
-                        ? challenge.recoveryDeadlineAtMs - simulation.campaignElapsedMs
-                          <= Math.round(simulation.dayDurationMs * 10 / (24 * 60))
-                        : challenge.urgentDeadlineAtMs - simulation.campaignElapsedMs <= 30_000
+                      challenge.urgentDeadlineAtMs - simulation.campaignElapsedMs <= 30_000
                         ? 'is-imminent'
                         : ''
                     }`}>
-                      {challenge.recoveryStatus === 'active'
-                        ? `RECOVERY · ${formatRemainingTime(challenge.recoveryDeadlineAtMs - simulation.campaignElapsedMs)} remaining`
-                        : challenge.recoveryStatus === 'available'
-                          ? 'INITIAL PENALTY APPLIED · Recovery available'
-                          : challenge.status === 'overdue'
-                        ? 'This job is late'
-                        : `Time left · ${formatRemainingTime(
+                      {challenge.status === 'overdue' ? (isMissed ? 'MISSED: resource penalties applied' : 'This job is late') : `Time left · ${formatRemainingTime(
                           challenge.urgentDeadlineAtMs - simulation.campaignElapsedMs,
                         )} remaining`}
                     </div>
                   )}
-                  {challenge.urgentDeadlineAtMs !== null && isUnfinished && (
+                  {challenge.urgentDeadlineAtMs !== null && isUnfinished && !isMissed && (
                     <small className="lunar-task-risk">If we wait: {challenge.riskIfDelayed}</small>
                   )}
-                  <button
+                  {!isMissed && <button
                     type="button"
                     className="lunar-task-locate"
                     onClick={() => {
@@ -2518,11 +2468,16 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                     }}
                   >
                     Show me where
-                  </button>
+                  </button>}
                   {isActive && (
                     <div className="lunar-task-current">
                       {challenge.status === 'overdue' ? 'Late · You can still try again' : 'In progress'}
                       {challenge.startedDay !== null ? ` · Started on day ${challenge.startedDay}` : ''}
+                    </div>
+                  )}
+                  {isMissed && (
+                    <div className="lunar-task-current">
+                      Missed: resource penalties applied
                     </div>
                   )}
                   {challenge.status === 'completed' && (
@@ -2963,10 +2918,8 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                     if (occurrenceId) simulation.dismissEndOfDayTaskNotice(occurrenceId);
                   }}
                 >×</button>
-                <strong>Let’s try this job earlier next time</strong>
-                <p>
-                  You couldn’t finish “{event.missedTaskTitle}” in time, so {event.name} happened. Remember this job for next time—you’re learning how to protect the outpost!
-                </p>
+                <strong>Critical task missed</strong>
+                <p>You could not finish {event.missedTaskTitle} before its deadline. The related problem, {event.name}, happened, and the resource penalties remain applied.</p>
               </aside>
             ))}
           </div>
@@ -2992,8 +2945,8 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                 aria-label="Dismiss critical task notice"
                 onClick={() => simulation.dismissTaskFailureNotice(notice.id)}
               >×</button>
-              <strong>A job to try sooner next time</strong>
-              <p>You couldn’t finish {notice.task} in time, so {notice.event} happened. You can use what you learned to act sooner next time.</p>
+              <strong>Critical task missed</strong>
+              <p>You could not finish {notice.task} in time, so {notice.event} happened. Its resource penalties remain applied.</p>
             </aside>
           ))}
           {visibleNotifications.map((notice) => (
@@ -3050,7 +3003,7 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
             </section>}
             <article className="mission-noor-reply"><span>DR. NOOR · MISSION CONTROL REPLIES</span><p>{getChapterReply(simulation.dayReport.day, simulation.dayReport.completedTasks.length, simulation.dayReport.totalEvents, simulation.dayReport.resources.science, getPlayerAddress(simulation.commanderName))}</p></article>
             {getStoryCallback(simulation.decisionHistory.filter((entry) => entry.day <= simulation.dayReport.day), simulation.dayReport.resources) && <p className="mission-story-callback">{getStoryCallback(simulation.decisionHistory.filter((entry) => entry.day <= simulation.dayReport.day), simulation.dayReport.resources)}</p>}
-            <p className="lunar-day-report-summary">{simulation.dayReport.overdueTasks.length} job{simulation.dayReport.overdueTasks.length === 1 ? '' : 's'} still need attention · {simulation.dayReport.expiredEvents} problem{simulation.dayReport.expiredEvents === 1 ? '' : 's'} still need a response</p>
+            <p className="lunar-day-report-summary">{simulation.dayReport.overdueTasks.length} unfinished job{simulation.dayReport.overdueTasks.length === 1 ? '' : 's'} · {simulation.dayReport.expiredEvents} problem{simulation.dayReport.expiredEvents === 1 ? '' : 's'} still need a response</p>
             {simulation.dayReport.eventOutcomes.length > 0 && (
               <div className="lunar-day-report-events">
                 <h3>Problems and choices</h3>
@@ -3067,12 +3020,19 @@ export default function LunarOutpost({ onExitToOrbit, simulation, commanderProfi
                 <h3>Jobs finished</h3>
                 {simulation.dayReport.completedTasks.length > 0 ? (
                   <ul>{simulation.dayReport.completedTasks.map((title) => <li key={title}>{title}</li>)}</ul>
-                ) : <p>No jobs finished today. You can try again tomorrow!</p>}
+                ) : <p>No jobs were finished today.</p>}
               </div>
               <div>
-                <h3>Jobs to finish</h3>
+                <h3>Unfinished jobs</h3>
                 {incompleteTaskTitles.length > 0 ? (
-                  <ul>{incompleteTaskTitles.map((title) => <li key={title}>{title}</li>)}</ul>
+                  <ul>{incompleteTaskTitles.map((title) => {
+                    const task = simulation.dailyChallenges.find((challenge) => challenge.title === title);
+                    return (
+                      <li key={title}>
+                        {title}{isCriticalTaskMissed(task) ? ' — MISSED · resource penalties applied' : ' — Late'}
+                      </li>
+                    );
+                  })}</ul>
                 ) : <p>All caught up!</p>}
               </div>
             </div>
