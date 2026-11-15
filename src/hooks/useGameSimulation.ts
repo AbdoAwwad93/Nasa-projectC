@@ -23,7 +23,6 @@ import {
   hasEventOccurredOnDay,
   removeEventOccurrence,
   getTaskCompletionResourceEffects,
-  getHalfResourceRestoration,
   getSuccessfulEventResourceEffects,
   getTaskMissResourceEffects,
   getElapsedResourceEffects,
@@ -245,7 +244,6 @@ export const MISSION_LENGTH_DAYS = 15;
 export const LUNAR_DAY_DURATION_MS = 300_000;
 const DAY_TRANSITION_DURATION_MS = 5000;
 const EVENT_RESPONSE_DURATION_MS = 60_000;
-const CRITICAL_TASK_RECOVERY_DURATION_MS = 45_000;
 const CLOCK_UPDATE_INTERVAL_MS = 1000;
 const RESOURCE_DISPLAY_NAMES: Record<ResourceKey, string> = {
   power: 'Power', battery: 'Battery', oxygen: 'Oxygen', water: 'Water', food: 'Food',
@@ -594,6 +592,7 @@ function applyConditionEffects(
 }
 
 function applyDayStartConsequences(state: GameState, day: number): GameState {
+  let resources = state.resources;
   let systemConditions = state.systemConditions;
   const faultHistory = [...state.faultHistory];
   let challengeFeedback: string | null = state.challengeFeedback;
@@ -615,18 +614,44 @@ function applyDayStartConsequences(state: GameState, day: number): GameState {
         reason: `${challenge.title} passed its Day ${challenge.deadlineDay} deadline`,
         change: systemConditions[challenge.affectedSystem] - conditionBefore,
       });
-      challengeFeedback = `${challenge.title} is overdue. ${challenge.affectedSystem} condition fell by ${challenge.overdueConditionLoss}.`;
-      nextTask = { ...challenge, overdueEffectApplied: true, deadlineMissed: true };
+      if (challenge.priority === 'critical') {
+        resources = applyEffects(resources, roundResourceEffects(getTaskMissResourceEffects(challenge)));
+      }
+      challengeFeedback = challenge.priority === 'critical'
+        ? `${challenge.title} is missed. ${challenge.affectedSystem} condition fell by ${challenge.overdueConditionLoss}.`
+        : `${challenge.title} is overdue. ${challenge.affectedSystem} condition fell by ${challenge.overdueConditionLoss}.`;
+      nextTask = {
+        ...challenge,
+        overdueEffectApplied: true,
+        deadlineMissed: true,
+        ...(challenge.priority === 'critical' ? {
+          recoveryStatus: 'expired' as const,
+          recoveryDeadlineAtMs: null,
+        } : {}),
+      };
     }
-    return { ...nextTask, status: 'overdue' as const, deadlineMissed: true };
+    return {
+      ...nextTask,
+      status: 'overdue' as const,
+      deadlineMissed: true,
+      ...(nextTask.priority === 'critical' ? {
+        recoveryStatus: 'expired' as const,
+        recoveryDeadlineAtMs: null,
+      } : {}),
+    };
   });
 
   let nextState: GameState = {
     ...state,
+    resources,
     dailyChallenges,
     systemConditions,
     faultHistory,
     challengeFeedback,
+    ...(findFailedVital(resources) ? {
+      gameStatus: 'failed' as const,
+      failureReason: findFailedVital(resources),
+    } : {}),
   };
   const systemResource: Record<SystemKey, ResourceKey> = {
     power: 'power',
@@ -674,7 +699,15 @@ function applyDayStartConsequences(state: GameState, day: number): GameState {
     }
   }
 
-  return { ...nextState, systemConditions, faultHistory };
+  const missedActiveCriticalTask = dailyChallenges.some((task) => (
+    task.id === state.activeChallengeId && task.priority === 'critical' && task.status === 'overdue'
+  ));
+  return {
+    ...nextState,
+    systemConditions,
+    faultHistory,
+    ...(missedActiveCriticalTask ? { activeChallengeId: null } : {}),
+  };
 }
 
 function applyTimedTaskConsequences(state: GameState): GameState {
@@ -687,7 +720,11 @@ function applyTimedTaskConsequences(state: GameState): GameState {
 
   const dailyChallenges = state.dailyChallenges.map((challenge) => {
     if (challenge.status === 'completed') return challenge;
-    let nextChallenge = challenge.recoveryStatus === 'active'
+    let nextChallenge = challenge.priority === 'critical'
+      && challenge.status === 'overdue'
+      && challenge.recoveryStatus !== 'expired'
+      ? { ...challenge, recoveryStatus: 'expired' as const, recoveryDeadlineAtMs: null }
+      : challenge.recoveryStatus === 'active'
       && challenge.recoveryDeadlineAtMs !== null
       && state.campaignElapsedMs >= challenge.recoveryDeadlineAtMs
       ? { ...challenge, recoveryStatus: 'expired' as const, recoveryDeadlineAtMs: null }
@@ -696,6 +733,7 @@ function applyTimedTaskConsequences(state: GameState): GameState {
     if (
       nextChallenge.urgentDeadlineAtMs !== null
       && !nextChallenge.urgentConsequenceApplied
+      && !(nextChallenge.priority === 'critical' && nextChallenge.status === 'overdue')
       && state.campaignElapsedMs >= nextChallenge.urgentDeadlineAtMs
     ) {
       if (!nextChallenge.overdueEffectApplied) {
@@ -717,19 +755,9 @@ function applyTimedTaskConsequences(state: GameState): GameState {
         ? nextChallenge.urgentResourceEffects ?? getTaskMissResourceEffects(nextChallenge)
         : {};
       const roundedMissedResourceEffects = roundResourceEffects(missedResourceEffects);
-      const resourcesBeforeMiss = resources;
       resources = applyEffects(resources, roundedMissedResourceEffects);
-      const canRecover = nextChallenge.priority === 'critical'
-        && TASK_CONSEQUENCE_EVENTS.some((event) => event.riskTaskIds?.includes(nextChallenge.id))
-        && nextChallenge.triggeredEventIds.length === 0;
-      const recoveryResourceLosses = (Object.keys(roundedMissedResourceEffects) as ResourceKey[])
-        .reduce((losses, resource) => {
-          const lost = Math.max(0, resourcesBeforeMiss[resource] - resources[resource]);
-          if (lost > 0) losses[resource] = lost;
-          return losses;
-        }, {} as Partial<Record<ResourceKey, number>>);
-      challengeFeedback = canRecover
-        ? `Time ran out for ${nextChallenge.title}, and some resources were used. Try the recovery job to win half back. The related problem will wait while you do.`
+      challengeFeedback = nextChallenge.priority === 'critical'
+        ? `${nextChallenge.title} is missed. Its deadline expired, and resource penalties have been applied.`
         : `${nextChallenge.title} is still waiting. ${nextChallenge.riskIfDelayed} You can try it sooner next time.`;
       nextChallenge = {
         ...nextChallenge,
@@ -737,8 +765,10 @@ function applyTimedTaskConsequences(state: GameState): GameState {
         deadlineMissed: true,
         overdueEffectApplied: true,
         urgentConsequenceApplied: true,
-        recoveryStatus: canRecover ? 'available' : nextChallenge.recoveryStatus,
-        recoveryResourceLosses: canRecover ? recoveryResourceLosses : nextChallenge.recoveryResourceLosses,
+        ...(nextChallenge.priority === 'critical' ? {
+          recoveryStatus: 'expired' as const,
+          recoveryDeadlineAtMs: null,
+        } : {}),
       };
     }
 
@@ -790,6 +820,9 @@ function applyTimedTaskConsequences(state: GameState): GameState {
     gameStatus = 'failed';
     failureReason = failedVital;
   }
+  const missedActiveCriticalTask = dailyChallenges.some((task) => (
+    task.id === state.activeChallengeId && task.priority === 'critical' && task.status === 'overdue'
+  ));
   return {
     ...state,
     resources,
@@ -799,6 +832,7 @@ function applyTimedTaskConsequences(state: GameState): GameState {
     gameStatus,
     failureReason,
     dailyChallenges,
+    ...(missedActiveCriticalTask ? { activeChallengeId: null } : {}),
   };
 }
 
@@ -1256,7 +1290,9 @@ function beginDayClosing(state: GameState, dayDurationMs: number): GameState {
         change: systemConditions[task.affectedSystem] - before,
       });
     }
-    const taskMissEffects = getTaskMissResourceEffects(task);
+    const taskMissEffects = task.priority === 'critical' && task.overdueEffectApplied
+      ? {}
+      : getTaskMissResourceEffects(task);
     resources = applyEffects(resources, task.priority === 'critical'
       ? roundResourceEffects(taskMissEffects)
       : taskMissEffects);
@@ -1278,6 +1314,11 @@ function beginDayClosing(state: GameState, dayDurationMs: number): GameState {
     endOfDayCriticalTransition: criticalTaskInProgress,
     eventResolutionLocked: false,
     dayElapsedMs: dayDurationMs,
+    activeChallengeId: state.dailyChallenges.some((task) => (
+      task.id === state.activeChallengeId
+      && task.priority === 'critical'
+      && task.status !== 'completed'
+    )) ? null : state.activeChallengeId,
     resources,
     dailyChallenges,
     systemConditions,
@@ -2052,7 +2093,8 @@ export function useGameSimulation({
         challengeHistory,
         activeChallengeId: currentState.activeChallengeId && linkedTaskIds.has(currentState.activeChallengeId)
           ? dailyChallenges.find((task) => (
-            task.status === 'inProgress' || task.status === 'overdue'
+            task.status === 'inProgress'
+            || (task.status === 'overdue' && task.priority !== 'critical')
           ))?.id ?? null
           : currentState.activeChallengeId,
         decisionHistory: [
@@ -2247,6 +2289,7 @@ export function useGameSimulation({
       if (
         !challenge
         || challenge.status === 'completed'
+        || (challenge.priority === 'critical' && challenge.status === 'overdue')
       ) return currentState;
 
       const startedTask = startTaskOccurrence(
@@ -2268,36 +2311,6 @@ export function useGameSimulation({
     });
   }, []);
 
-  const startCriticalTaskRecovery = useCallback((challengeId: string) => {
-    setState((currentState) => {
-      if (
-        currentState.gameStatus !== 'playing'
-        || currentState.dayPhase !== 'active'
-        || currentState.warningTaskId
-      ) return currentState;
-      const challenge = currentState.dailyChallenges.find((task) => task.id === challengeId);
-      if (!challenge || challenge.priority !== 'critical'
-        || challenge.status !== 'overdue'
-        || challenge.recoveryStatus !== 'available'
-        || !TASK_CONSEQUENCE_EVENTS.some((event) => event.riskTaskIds?.includes(challenge.id))) {
-        return currentState;
-      }
-      return {
-        ...currentState,
-        activeChallengeId: challenge.id,
-        challengeFeedback: `Try ${challenge.title} again in 45 seconds to win back half of the resources lost.`,
-        dailyChallenges: currentState.dailyChallenges.map((task) => task.id === challenge.id
-          ? {
-            ...task,
-            recoveryStatus: 'active',
-            recoveryAttempted: true,
-            recoveryDeadlineAtMs: currentState.campaignElapsedMs + CRITICAL_TASK_RECOVERY_DURATION_MS,
-          }
-          : task),
-      };
-    });
-  }, []);
-
   const completeDailyChallenge = useCallback((challengeId: string, componentId: string, selectedSolution?: { resourceEffects?: Partial<Record<ResourceKey, number>>; conditionDelta?: number }, remotePlayerName?: string) => {
     setState((currentState) => {
       if (
@@ -2312,11 +2325,12 @@ export function useGameSimulation({
       if (
         !challenge ||
         (challenge.status !== 'inProgress' && challenge.status !== 'overdue' && !(remotePlayerName && challenge.status === 'available')) ||
-        (challenge.recoveryStatus === 'available') ||
-        (challenge.priority === 'critical'
-          && TASK_CONSEQUENCE_EVENTS.some((event) => event.riskTaskIds?.includes(challenge.id))
-          && challenge.urgentConsequenceApplied
-          && challenge.recoveryStatus !== 'active') ||
+        (challenge.priority === 'critical' && (
+          challenge.status === 'overdue'
+          || challenge.deadlineMissed
+          || (challenge.urgentDeadlineAtMs !== null
+            && currentState.campaignElapsedMs >= challenge.urgentDeadlineAtMs)
+        )) ||
         challenge.targetComponentId !== componentId
       ) {
         return currentState;
@@ -2333,9 +2347,7 @@ export function useGameSimulation({
         && !completedAfterDeadline
         && !challenge.urgentConsequenceApplied
         && !challenge.escalationApplied;
-      const completionEffects: Partial<Record<ResourceKey, number>> = challenge.recoveryStatus === 'active'
-        ? roundResourceEffects(getTaskCompletionResourceEffects(challenge))
-        : getTaskCompletionResourceEffects(challenge);
+      const completionEffects: Partial<Record<ResourceKey, number>> = getTaskCompletionResourceEffects(challenge);
       for (const [resource, amount] of Object.entries(selectedSolution?.resourceEffects ?? {}) as [ResourceKey, number][]) {
         completionEffects[resource] = (completionEffects[resource] ?? 0) + amount;
       }
@@ -2343,12 +2355,6 @@ export function useGameSimulation({
         currentState.resources,
         completionEffects,
       );
-      const recoveryRestoration = challenge.recoveryStatus === 'active'
-        ? getHalfResourceRestoration(challenge.recoveryResourceLosses)
-        : {};
-      if (Object.keys(recoveryRestoration).length > 0) {
-        resources = applyEffects(resources, recoveryRestoration);
-      }
       const systemConditions = changeSystemCondition(
         currentState.systemConditions,
         challenge.affectedSystem,
@@ -2388,7 +2394,6 @@ export function useGameSimulation({
               completedAfterDeadline,
               responseTimeMs,
               emergencyPrevented,
-              recoveryStatus: challenge.recoveryStatus === 'active' ? 'completed' : challenge.recoveryStatus,
               recoveryDeadlineAtMs: null,
             }
             : task,
@@ -2396,7 +2401,8 @@ export function useGameSimulation({
         activeChallengeId: currentState.activeChallengeId === challenge.id
           ? currentState.dailyChallenges.find(
             (task) => task.id !== challenge.id
-              && (task.status === 'inProgress' || task.status === 'overdue'),
+              && (task.status === 'inProgress'
+                || (task.status === 'overdue' && task.priority !== 'critical')),
           )?.id ?? null
           : currentState.activeChallengeId,
         flags: currentState.flags.includes(challenge.readinessFlag)
@@ -2416,8 +2422,6 @@ export function useGameSimulation({
         ],
         challengeFeedback: remotePlayerName
           ? taskSuccessFeedback
-          : challenge.recoveryStatus === 'active'
-          ? `Great recovery! You won back half the resources from this job. ${challenge.completionFeedback}`
           : emergencyPrevented
           ? `Nice work! You finished ${challenge.title} in time and stopped a bigger problem. ${challenge.completionFeedback}`
           : completedAfterDeadline
@@ -2643,7 +2647,6 @@ export function useGameSimulation({
     dismissEndOfDayTaskNotice,
     presentEndOfDayTaskNotice,
     startDailyChallenge,
-    startCriticalTaskRecovery,
     completeDailyChallenge,
     dismissChallengeFeedback,
     abandonEvent,

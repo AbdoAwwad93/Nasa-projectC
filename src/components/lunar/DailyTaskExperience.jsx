@@ -305,7 +305,7 @@ export default function DailyTaskExperience({ task, commanderName, initialStage 
         )}
 
         {stage === 'complete-pending' && <div className="daily-task-stage"><span className="daily-task-stage-label">Saving task outcome</span><p>Almost there! Your work is being saved.</p></div>}
-        {stage === 'failed' && <div className="daily-task-stage"><span className="daily-task-stage-label">Task needs recovery</span><p>The task deadline was reached before this completion could be recorded. Follow the existing recovery instructions to try again.</p><button className="daily-task-primary" type="button" onClick={onClose}>Close</button></div>}
+        {stage === 'failed' && <div className="daily-task-stage"><span className="daily-task-stage-label">{task.priority === 'critical' ? 'Critical task missed' : 'Task deadline reached'}</span><p>{task.priority === 'critical' ? 'The deadline expired before completion. The task is marked missed, and its resource penalties have been applied.' : 'The task deadline was reached before this completion could be recorded.'}</p><button className="daily-task-primary" type="button" onClick={onClose}>Close</button></div>}
 
         {stage === 'conclusion' && (
           <div className="daily-task-stage daily-task-success-stage">
