@@ -12,7 +12,7 @@ const send = (res, status, data) => {
   res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(data));
 };
-const roomView = (room) => ({ code: room.code, hostId: room.hostId, started: room.started, cancelled: Boolean(room.cancelled), seed: room.seed ?? null, players: room.players, completedTasks: room.completedTasks, events: room.events });
+const roomView = (room) => ({ code: room.code, hostId: room.hostId, started: room.started, cancelled: Boolean(room.cancelled), seed: room.seed ?? null, players: room.players, completedTasks: room.completedTasks, events: room.events, rovers: (room.rovers ?? []).filter((rover) => Date.now() - rover.updatedAt < 2500) });
 
 const server = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, {});
@@ -23,7 +23,7 @@ const server = createServer(async (req, res) => {
       const playerId = String(body.playerId || randomUUID());
       let code;
       do { code = randomInt(0, 1_000_000).toString().padStart(6, '0'); } while (rooms.has(code));
-      const room = { code, hostId: playerId, started: false, players: [{ id: playerId, name: clean(body.name), ready: true }], completedTasks: [], events: [], voiceSignals: [] };
+      const room = { code, hostId: playerId, started: false, players: [{ id: playerId, name: clean(body.name), ready: true }], completedTasks: [], events: [], voiceSignals: [], rovers: [] };
       rooms.set(code, room);
       return send(res, 201, { playerId, room: roomView(room) });
     }
@@ -65,6 +65,7 @@ const server = createServer(async (req, res) => {
       const playerIndex = room.players.findIndex((entry) => entry.id === body.playerId);
       if (playerIndex < 0) return send(res, 404, { error: 'Player is not in this room' });
       const [leavingPlayer] = room.players.splice(playerIndex, 1);
+      room.rovers = (room.rovers ?? []).filter((rover) => rover.driverId !== leavingPlayer.id);
       if (room.hostId === leavingPlayer.id) {
         room.hostId = room.players[0]?.id ?? null;
         if (room.hostId) {
@@ -152,6 +153,32 @@ const server = createServer(async (req, res) => {
         componentId: typeof componentId === 'string' ? componentId.slice(0, 12) : null,
         updatedAt: Date.now(),
       };
+      room.rovers ??= [];
+      if (body.rover == null) {
+        room.rovers = room.rovers.filter((rover) => rover.driverId !== player.id);
+      } else {
+        const roverId = Number(body.rover.id);
+        const { x, z, heading, speed, steering } = body.rover;
+        if (![1, 2].includes(roverId) || ![x, z, heading, speed, steering].every(Number.isFinite)) {
+          return send(res, 400, { error: 'A valid rover state is required' });
+        }
+        const currentDriver = room.rovers.find((rover) => rover.roverId === roverId && Date.now() - rover.updatedAt < 2500);
+        if (currentDriver && currentDriver.driverId !== player.id) {
+          return send(res, 409, { error: 'Rover is already being driven', driverName: currentDriver.driverName });
+        }
+        room.rovers = room.rovers.filter((rover) => rover.driverId !== player.id && rover.roverId !== roverId);
+        room.rovers.push({
+          roverId,
+          driverId: player.id,
+          driverName: player.name,
+          x: Math.max(-10000, Math.min(10000, x)),
+          z: Math.max(-10000, Math.min(10000, z)),
+          heading,
+          speed: Math.max(-20, Math.min(20, speed)),
+          steering: Math.max(-1, Math.min(1, steering)),
+          updatedAt: Date.now(),
+        });
+      }
       return send(res, 200, { ok: true });
     }
     return send(res, 405, { error: 'Method not allowed' });

@@ -267,6 +267,8 @@ export function createLunarEngine(canvas, callbacks = {}) {
   // Rover fleet. Each entry owns its own chassis transform, wheel bones and
   // drive state so two rovers can park and roll independently.
   const rovers = [];
+  let sharedRoverStates = [];
+  let sharedRoverLocalPlayerId = null;
   let activeRover = null; // chassis currently bound to the camera
   let roverCameraActive = false;
   let roverRemoteControl = false; // true while driving from a command center monitor
@@ -1397,6 +1399,23 @@ export function createLunarEngine(canvas, callbacks = {}) {
   const roverBasisMatrix = new THREE.Matrix4();
 
   function createRoverRig(root, slot) {
+    const labelCanvas = document.createElement('canvas');
+    labelCanvas.width = 512;
+    labelCanvas.height = 144;
+    const labelContext = labelCanvas.getContext('2d');
+    const labelTexture = new THREE.CanvasTexture(labelCanvas);
+    labelTexture.colorSpace = THREE.SRGBColorSpace;
+    const labelSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: labelTexture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    }));
+    labelSprite.scale.set(4.4, 1.24, 1);
+    labelSprite.renderOrder = 995;
+    labelSprite.visible = false;
+    scene.add(labelSprite);
     const rover = {
       id: slot.id,
       label: slot.label,
@@ -1406,6 +1425,10 @@ export function createLunarEngine(canvas, callbacks = {}) {
       speed: 0,
       heading: 0,
       steering: 0,
+      remoteState: null,
+      driverId: null,
+      driverName: '',
+      driverTag: { canvas: labelCanvas, context: labelContext, texture: labelTexture, sprite: labelSprite, text: '' },
       wheelAngle: 0,
       groundOffset: 0,
       halfLength: 4,
@@ -1453,6 +1476,52 @@ export function createLunarEngine(canvas, callbacks = {}) {
       );
     }
     return rover;
+  }
+
+  function updateRoverDriverTag(rover, driverName) {
+    const name = String(driverName ?? '').trim().slice(0, 24);
+    rover.driverName = name;
+    rover.driverTag.sprite.visible = Boolean(name);
+    if (!name || rover.driverTag.text === name) return;
+    const { canvas, context } = rover.driverTag;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = 'rgba(5, 18, 28, 0.94)';
+    context.beginPath();
+    context.roundRect(10, 10, 492, 124, 28);
+    context.fill();
+    context.strokeStyle = `#${rover.tint.toString(16).padStart(6, '0')}`;
+    context.lineWidth = 5;
+    context.stroke();
+    context.fillStyle = '#ecfbff';
+    context.font = '700 48px system-ui, sans-serif';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(name, 256, 72, 450);
+    rover.driverTag.texture.needsUpdate = true;
+    rover.driverTag.text = name;
+  }
+
+  function applyCrewRoverStates() {
+    const currentTime = Date.now();
+    const freshStates = sharedRoverStates.filter((state) => currentTime - state.updatedAt < 2500);
+    const statesById = new Map(freshStates.map((state) => [state.roverId, state]));
+    for (const rover of rovers) {
+      const state = statesById.get(rover.id) ?? null;
+      const remoteState = state?.driverId !== sharedRoverLocalPlayerId ? state : null;
+      if (rover.remoteState && !remoteState) {
+        rover.speed = 0;
+        rover.steering = 0;
+      }
+      rover.driverId = state?.driverId ?? null;
+      updateRoverDriverTag(rover, state?.driverName ?? '');
+      rover.remoteState = remoteState;
+    }
+  }
+
+  function setCrewRovers(states = [], localPlayerId = null) {
+    sharedRoverStates = Array.isArray(states) ? states : [];
+    sharedRoverLocalPlayerId = localPlayerId;
+    applyCrewRoverStates();
   }
 
   function mountRovers(outpostBounds) {
@@ -1515,6 +1584,8 @@ export function createLunarEngine(canvas, callbacks = {}) {
           rover.chassisQuaternion.copy(root.quaternion);
           rovers.push(rover);
         }
+
+        applyCrewRoverStates();
 
         console.info('[Rover] Fleet ready. Arrow Up drives; Left/Right steer.', {
           rovers: rovers.map(rover => ({
@@ -4327,48 +4398,62 @@ export function createLunarEngine(canvas, callbacks = {}) {
     controls.target.copy(roverCameraLookAt);
   }
 
-  function stepRover(rover, dt, driving, steerInput, throttleInput) {
+  function stepRover(rover, dt, driving, steerInput, throttleInput, sharedState = null) {
     // Gradient sampled last frame: climbing costs speed, descending gains it, so
     // the drivetrain feels like it is pulling against the surface.
     const slopeFactor = THREE.MathUtils.clamp(1 - rover.climb * 0.9, 0.35, 1.5);
-    const targetSpeed = driving
-      ? (throttleInput > 0 ? 8 * throttleInput : throttleInput < 0 ? 3 * throttleInput : 0) * slopeFactor
+    const networked = Boolean(sharedState && !driving);
+    const targetSpeed = networked
+      ? sharedState.speed
+      : driving
+        ? (throttleInput > 0 ? 8 * throttleInput : throttleInput < 0 ? 3 * throttleInput : 0) * slopeFactor
       : 0;
-    rover.speed = THREE.MathUtils.damp(rover.speed, targetSpeed, driving && throttleInput ? 2.8 : 4.5, dt);
-    rover.steering = THREE.MathUtils.damp(rover.steering, driving ? steerInput * 0.3 : 0, 9, dt);
+    rover.speed = THREE.MathUtils.damp(rover.speed, targetSpeed, networked ? 16 : driving && throttleInput ? 2.8 : 4.5, dt);
+    rover.steering = THREE.MathUtils.damp(rover.steering, networked ? sharedState.steering : driving ? steerInput * 0.52 : 0, networked ? 16 : 14, dt);
 
     const chassis = rover.root;
     // This extracted rover faces local +X. Arrow Up drives along its nose; side
     // keys steer, turning the chassis while it is moving.
-    if (Math.abs(rover.speed) > 0.01) {
-      rover.heading += rover.steering * 0.55 * Math.sign(rover.speed) * dt;
+    if (networked) {
+      const blend = 1 - Math.exp(-16 * dt);
+      const headingDelta = Math.atan2(Math.sin(sharedState.heading - rover.heading), Math.cos(sharedState.heading - rover.heading));
+      rover.heading += headingDelta * blend;
+      chassis.position.x = THREE.MathUtils.lerp(chassis.position.x, sharedState.x, blend);
+      chassis.position.z = THREE.MathUtils.lerp(chassis.position.z, sharedState.z, blend);
+    } else {
+      if (Math.abs(rover.speed) > 0.01) {
+        rover.heading += rover.steering * 1.1 * Math.sign(rover.speed) * dt;
+      }
+
+      const forwardX = Math.cos(rover.heading);
+      const forwardZ = -Math.sin(rover.heading);
+      const travel = rover.speed * dt;
+
+      // Horizontal move with the walker's axis slide: a wall stops the axis that
+      // hits it and lets the rover scrape along the face instead of dead-stopping.
+      if (Math.abs(travel) > 1e-5) {
+        const nextX = chassis.position.x + forwardX * travel;
+        const nextZ = chassis.position.z + forwardZ * travel;
+        const feetY = chassis.position.y - rover.groundOffset;
+        if (!isRoverBlockedAt(nextX, nextZ, rover, feetY)) {
+          chassis.position.x = nextX;
+          chassis.position.z = nextZ;
+        } else if (!isRoverBlockedAt(nextX, chassis.position.z, rover, feetY)) {
+          chassis.position.x = nextX;
+          rover.speed *= 0.55;
+        } else if (!isRoverBlockedAt(chassis.position.x, nextZ, rover, feetY)) {
+          chassis.position.z = nextZ;
+          rover.speed *= 0.55;
+        } else {
+          rover.speed = 0;
+        }
+      }
     }
 
     const forwardX = Math.cos(rover.heading);
     const forwardZ = -Math.sin(rover.heading);
     const sideX = Math.sin(rover.heading);
     const sideZ = Math.cos(rover.heading);
-    const travel = rover.speed * dt;
-
-    // Horizontal move with the walker's axis slide: a wall stops the axis that
-    // hits it and lets the rover scrape along the face instead of dead-stopping.
-    if (Math.abs(travel) > 1e-5) {
-      const nextX = chassis.position.x + forwardX * travel;
-      const nextZ = chassis.position.z + forwardZ * travel;
-      const feetY = chassis.position.y - rover.groundOffset;
-      if (!isRoverBlockedAt(nextX, nextZ, rover, feetY)) {
-        chassis.position.x = nextX;
-        chassis.position.z = nextZ;
-      } else if (!isRoverBlockedAt(nextX, chassis.position.z, rover, feetY)) {
-        chassis.position.x = nextX;
-        rover.speed *= 0.55;
-      } else if (!isRoverBlockedAt(chassis.position.x, nextZ, rover, feetY)) {
-        chassis.position.z = nextZ;
-        rover.speed *= 0.55;
-      } else {
-        rover.speed = 0;
-      }
-    }
 
     // Sample the ground under each corner plus the belly, so the body can sit on
     // the plane through the wheels and lean onto the local slope.
@@ -4495,7 +4580,16 @@ export function createLunarEngine(canvas, callbacks = {}) {
       : 0;
 
     for (const rover of rovers) {
-      stepRover(rover, dt, canDrive && rover === activeRover, steerInput, throttleInput);
+      const driving = canDrive && rover === activeRover;
+      stepRover(rover, dt, driving, steerInput, throttleInput, driving ? null : rover.remoteState);
+    }
+  }
+
+  function updateRoverDriverTags() {
+    for (const rover of rovers) {
+      const tag = rover.driverTag.sprite;
+      if (!tag.visible) continue;
+      tag.position.set(rover.root.position.x, rover.root.position.y + 3.2, rover.root.position.z);
     }
   }
 
@@ -5662,6 +5756,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
       marker.mixer?.update(dt);
     }
     updateRoverDrive(dt);
+    updateRoverDriverTags();
 
     // The screens are only on screen while the player stands in the command
     // center, so that is the only time they are worth updating. Each redraw is a
@@ -5801,7 +5896,9 @@ export function createLunarEngine(canvas, callbacks = {}) {
     // Event cinematics temporarily move the render camera to frame an outpost
     // problem. Keep publishing the player's pre-cinematic world position so
     // other crew markers remain anchored while this camera transition plays.
-    const playerCameraPosition = eventCinematic?.snapshot?.cameraPosition ?? camera.position;
+    const playerCameraPosition = roverCameraActive
+      ? roverCameraSavedPosition
+      : eventCinematic?.snapshot?.cameraPosition ?? camera.position;
     if (cameraMode === 'interior') {
       return {
         x: playerCameraPosition.x,
@@ -5813,8 +5910,10 @@ export function createLunarEngine(canvas, callbacks = {}) {
         componentId: activeComponentTarget?.id ?? null,
       };
     }
-    const position = cameraMode === 'first-person' ? playerCameraPosition : controls.target;
-    const groundY = cameraMode === 'first-person'
+    const position = roverCameraActive
+      ? cameraMode === 'free' ? roverCameraSavedTarget : playerCameraPosition
+      : cameraMode === 'first-person' ? playerCameraPosition : controls.target;
+    const groundY = cameraMode === 'first-person' || (roverCameraActive && cameraMode !== 'free')
       ? position.y - playerCameraHeight
       : sampleGroundHeight(position.x, position.z) ?? position.y;
     return {
@@ -5825,6 +5924,19 @@ export function createLunarEngine(canvas, callbacks = {}) {
       moving: ['first-person', 'interior'].includes(cameraMode) && firstPersonVelocity.length() > 0.2,
       location: 'exterior',
       componentId: null,
+    };
+  }
+
+  function getDrivenRoverState() {
+    if (!roverCameraActive || !activeRover) return null;
+    return {
+      id: activeRover.id,
+      label: activeRover.label,
+      x: activeRover.root.position.x,
+      z: activeRover.root.position.z,
+      heading: activeRover.heading,
+      speed: activeRover.speed,
+      steering: activeRover.steering,
     };
   }
 
@@ -6188,7 +6300,9 @@ export function createLunarEngine(canvas, callbacks = {}) {
   return {
     getMapSnapshot,
     getCrewPosition,
+    getDrivenRoverState,
     setCrewMarkers,
+    setCrewRovers,
     capturePhoto: () => {
       renderer.render(scene, camera);
       return renderer.domElement.toDataURL('image/png');
@@ -6314,6 +6428,11 @@ export function createLunarEngine(canvas, callbacks = {}) {
         labelSprite?.material?.dispose();
       }
       crewMarkers.clear();
+      for (const rover of rovers) {
+        scene.remove(rover.driverTag.sprite);
+        rover.driverTag.texture.dispose();
+        rover.driverTag.sprite.material.dispose();
+      }
 
       // Dispose active procedural module
       if (activeModuleInterior) {

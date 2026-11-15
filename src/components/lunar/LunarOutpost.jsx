@@ -518,6 +518,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
         if (!response.ok) return;
         const { room } = await response.json();
         if (!live) return;
+        engineRef.current?.setCrewRovers?.(room.rovers ?? [], commanderProfile.playerId);
         const currentTime = Date.now();
         const nextCrewPositions = room.players.filter((player) => (
           player.id !== commanderProfile.playerId
@@ -584,20 +585,26 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
       if (sending || !live) return;
       const position = engineRef.current?.getCrewPosition?.();
       if (!position) return;
+      const rover = engineRef.current?.getDrivenRoverState?.() ?? null;
       sending = true;
       try {
-        await fetchLocalNetwork(`${MULTIPLAYER_API}/api/rooms/${encodeURIComponent(commanderProfile.roomCode)}/players/position`, {
+        const response = await fetchLocalNetwork(`${MULTIPLAYER_API}/api/rooms/${encodeURIComponent(commanderProfile.roomCode)}/players/position`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ playerId: commanderProfile.playerId, position }),
+          body: JSON.stringify({ playerId: commanderProfile.playerId, position, rover }),
         });
+        if (response.status === 409 && rover) {
+          const conflict = await response.json().catch(() => ({}));
+          engineRef.current?.exitRoverControl?.();
+          showCrewNotification(`rover-busy-${rover.id}`, `${conflict.driverName || 'A crewmate'} is already driving ${rover.label || `Rover ${rover.id}`}`);
+        }
       } catch { /* Position markers resume when the room relay is reachable. */ }
       finally { sending = false; }
     };
     void publishPosition();
     const timer = window.setInterval(publishPosition, 400);
     return () => { live = false; window.clearInterval(timer); };
-  }, [commanderProfile, isLoading]);
+  }, [commanderProfile, isLoading, showCrewNotification]);
   useEffect(() => {
     if (isLoading) return;
     engineRef.current?.setCrewMarkers?.(crewPositions);
