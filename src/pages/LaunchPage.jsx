@@ -83,6 +83,7 @@ export default function LaunchPage({ simulation, onMissionStart }) {
             tutorialMode={phase !== 'lunar'}
             tutorialActive={phase === 'tutorial'}
             onInitialCameraSettled={handleInitialCameraSettled}
+            onRoomExit={handleRoomExit}
           />
           {phase === 'tutorial' && <OutpostTutorial onComplete={finishTutorial} />}
         </Suspense>

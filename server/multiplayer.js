@@ -73,11 +73,27 @@ const server = createServer(async (req, res) => {
       const playerIndex = room.players.findIndex((entry) => entry.id === body.playerId);
       if (playerIndex < 0) return send(res, 404, { error: 'Player is not in this room' });
       const [leavingPlayer] = room.players.splice(playerIndex, 1);
+      const leftAt = Date.now();
+      room.events.push({
+        id: randomUUID(),
+        type: 'player-left',
+        playerId: leavingPlayer.id,
+        playerName: leavingPlayer.name,
+        at: leftAt,
+      });
       room.rovers = (room.rovers ?? []).filter((rover) => rover.driverId !== leavingPlayer.id);
       if (room.hostId === leavingPlayer.id) {
         room.hostId = room.players[0]?.id ?? null;
         if (room.hostId) {
-          room.events.push({ id: randomUUID(), type: 'host-changed', playerId: room.hostId, playerName: room.players[0].name, at: Date.now() });
+          room.events.push({
+            id: randomUUID(),
+            type: 'host-changed',
+            playerId: room.hostId,
+            playerName: room.players[0].name,
+            previousHostId: leavingPlayer.id,
+            previousHostName: leavingPlayer.name,
+            at: Date.now(),
+          });
         }
       }
       if (room.players.length === 0) rooms.delete(room.code);
@@ -116,6 +132,7 @@ const server = createServer(async (req, res) => {
       room.currentDay = 1;
       room.dayStartedAt = room.startedAt;
       room.finished = false;
+      room.events = [];
       room.events.push({ id: randomUUID(), type: 'mission-started', at: room.startedAt });
       return send(res, 200, { room: roomView(room), seed: room.seed });
     }

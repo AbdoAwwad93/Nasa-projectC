@@ -5,6 +5,7 @@ import EndGameReport from '../EndGameReport';
 import DailyTaskExperience from './DailyTaskExperience';
 import CrewVoiceChat from './CrewVoiceChat';
 import CrewTextChat from './CrewTextChat';
+import CrewRoster from './CrewRoster';
 import { getDailyTaskExperience } from '../../data/dailyTaskExperiences';
 import { getPlayerAddress } from '../../utils/playerAddress';
 import { getChapterReply, getEventNarration, getStoryCallback, LOCATION_STORY_CARDS, SCIENCE_DISCOVERIES, STORY_CHAPTERS, STORY_DAY_BEATS } from '../../data/missionStory';
@@ -162,7 +163,7 @@ function snapshotsMatch(current, next) {
   return true;
 }
 
-export default function LunarOutpost({ simulation, commanderProfile, tutorialMode = false, tutorialActive = false, onInitialCameraSettled }) {
+export default function LunarOutpost({ simulation, commanderProfile, tutorialMode = false, tutorialActive = false, onInitialCameraSettled, onRoomExit }) {
   const containerRef = useRef(null);
   const engineRef = useRef(null);
   const presentedEventRef = useRef(null);
@@ -336,6 +337,9 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
   const [taskOutcomeStart, setTaskOutcomeStart] = useState(null);
   const [crewTaskNotification, setCrewTaskNotification] = useState(null);
   const [crewPositions, setCrewPositions] = useState([]);
+  const [crewRoster, setCrewRoster] = useState([]);
+  const [crewRosterOpen, setCrewRosterOpen] = useState(false);
+  const [leavingRoom, setLeavingRoom] = useState(false);
   const [taskRecapSpeaking, setTaskRecapSpeaking] = useState(false);
   const [storyMoment, setStoryMoment] = useState(null);
   const [, setDayOpeningMessage] = useState('');
@@ -508,6 +512,18 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
           simulation.syncMultiplayerClock({ ...room, clientRequestStartedAt, clientResponseReceivedAt });
         }
         setMultiplayerHostId(room.hostId);
+        const nextRoster = (room.players ?? []).map((player) => ({
+          id: player.id,
+          name: player.name || 'Commander',
+        }));
+        setCrewRoster((current) => (
+          current.length === nextRoster.length
+          && current.every((player, index) => (
+            player.id === nextRoster[index]?.id && player.name === nextRoster[index]?.name
+          ))
+            ? current
+            : nextRoster
+        ));
         if (room.finished && simulation.dayPhase === 'report' && simulation.gameStatus === 'playing') {
           simulation.advanceDay();
         } else if (room.currentDay > simulation.day && simulation.dayPhase === 'report') {
@@ -542,6 +558,35 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
         });
         for (const event of room.events ?? []) {
           if (multiplayerEventIdsRef.current.has(event.id)) continue;
+          if (event.type === 'host-changed') {
+            multiplayerEventIdsRef.current.add(event.id);
+            setMultiplayerHostId(event.playerId);
+            const previousHostDeparture = (room.events ?? []).find((roomEvent) => (
+              roomEvent.type === 'player-left' && roomEvent.playerId === event.previousHostId
+            ));
+            const previousHostName = event.previousHostName || previousHostDeparture?.playerName || 'The host';
+            showCrewNotification(
+              event.id,
+              previousHostDeparture
+                ? event.playerId === commanderProfile.playerId
+                  ? `${previousHostName} left. You are now the mission host`
+                  : `${previousHostName} left. ${event.playerName || 'A crewmate'} is now the mission host`
+                : event.playerId === commanderProfile.playerId
+                  ? 'You are now the mission host'
+                  : `${event.playerName || 'A crewmate'} is now the mission host`,
+            );
+            continue;
+          }
+          if (event.type === 'player-left') {
+            multiplayerEventIdsRef.current.add(event.id);
+            const promotedAfterDeparture = (room.events ?? []).some((roomEvent) => (
+              roomEvent.type === 'host-changed' && roomEvent.previousHostId === event.playerId
+            ));
+            if (event.playerId !== commanderProfile.playerId && !promotedAfterDeparture) {
+              showCrewNotification(event.id, `${event.playerName || 'A crewmate'} left the room`);
+            }
+            continue;
+          }
           if (event.playerId === commanderProfile.playerId) {
             multiplayerEventIdsRef.current.add(event.id);
             continue;
@@ -1274,11 +1319,14 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     || radioOpen
     || Boolean(noorCall)
     || Boolean(simulation.warningTaskId)
+    || crewRosterOpen
     || crewChatOpen
     || (simulation.dayPhase === 'report' && simulation.dayReport && dayReportReadyDay === simulation.dayReport.day && storyRewardDay === null)
     || simulation.gameStatus !== 'playing';
   const touchControlsVisible = showTouchControls
     && !mapIsOpen
+    && !crewRosterOpen
+    && !crewChatOpen
     && !dailyTasksOpen
     && !statusOpen
     && !taskExperienceId;
@@ -1825,6 +1873,30 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     }
     simulation.advanceDay();
   };
+  const leaveCrewRoom = async () => {
+    if (!commanderProfile?.multiplayer || !commanderProfile.roomCode || leavingRoom) return;
+    setLeavingRoom(true);
+    try {
+      const response = await fetchLocalNetwork(`${MULTIPLAYER_API}/api/rooms/${encodeURIComponent(commanderProfile.roomCode)}/leave`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId: commanderProfile.playerId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not leave the crew room.');
+      sessionStorage.removeItem('lunar-room-code');
+      sessionStorage.removeItem('lunar-room-api');
+      setCrewRosterOpen(false);
+      onRoomExit?.();
+    } catch (error) {
+      showCrewNotification(
+        `leave-room-error-${Date.now()}`,
+        error instanceof Error ? error.message : 'Could not leave the crew room.',
+      );
+    } finally {
+      setLeavingRoom(false);
+    }
+  };
   return (
     <div
       className={`lunar-root${insidePanel.visible ? ' is-inside' : ''}${showOrientationGuidance ? ' is-gameplay-portrait' : ''}${mapIsOpen ? ' is-map-open' : ''}`}
@@ -1987,6 +2059,18 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
 
 
         <div className="lunar-actions-group">
+          {commanderProfile?.multiplayer && commanderProfile?.roomCode && (
+            <CrewRoster
+              players={crewRoster}
+              hostId={multiplayerHostId}
+              playerId={commanderProfile.playerId}
+              roomCode={commanderProfile.roomCode}
+              open={crewRosterOpen}
+              onOpenChange={setCrewRosterOpen}
+              onLeaveRoom={() => void leaveCrewRoom()}
+              leaving={leavingRoom}
+            />
+          )}
           {commanderProfile?.multiplayer && commanderProfile?.roomCode && (
             <CrewVoiceChat
               apiBase={MULTIPLAYER_API}
