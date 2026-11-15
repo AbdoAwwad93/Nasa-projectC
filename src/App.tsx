@@ -12,6 +12,7 @@ export default function App() {
       onMissionStart={(profile) => {
         simulation.restart(profile?.multiplayer ? profile.seed : undefined);
         simulation.setMissionProfile(profile);
+        simulation.syncMultiplayerClock(profile?.multiplayer ? profile : null);
         setMissionActive(true);
       }}
     />

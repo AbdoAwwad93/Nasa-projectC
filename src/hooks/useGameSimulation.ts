@@ -91,6 +91,15 @@ export interface GameSimulationOptions {
   seed?: number;
 }
 
+export interface MultiplayerClockSync {
+  startedAt?: number;
+  dayStartedAt?: number;
+  currentDay?: number;
+  serverTime?: number;
+  clientRequestStartedAt?: number;
+  clientResponseReceivedAt?: number;
+}
+
 export type DailyChallengeStatus = 'available' | 'inProgress' | 'overdue' | 'completed';
 export type CriticalTaskRecoveryStatus = 'available' | 'active' | 'completed' | 'expired' | null;
 export interface DailyChallenge extends DailyChallengeDefinition {
@@ -264,10 +273,6 @@ function isEventOptionResource(resource: string): resource is SurvivalResourceKe
 
 function eventOccurrenceKey(event: GameEvent | null | undefined): string | null {
   return event?.occurrenceId ?? (event ? `${event.id}-${event.day ?? 0}` : null);
-}
-
-function hasPendingCriticalTaskNotice(state: GameState): boolean {
-  return state.taskFailureNotices.length > 0 || state.endOfDayNoticeHistory.length > 0;
 }
 
 function hasIndependentEventOccurredOnDay(state: GameState): boolean {
@@ -837,11 +842,16 @@ function applyTimedTaskConsequences(state: GameState): GameState {
 }
 
 function createDayReport(state: GameState): GameState {
-  if (state.gameStatus !== 'playing' || hasPendingCriticalTaskNotice(state)) return state;
+  if (state.gameStatus !== 'playing') return state;
   return {
     ...state,
     dayPhase: 'report',
     eventFailureNotices: [],
+    taskFailureNotices: [],
+    endOfDayEvents: [],
+    endOfDayNoticeHistory: [],
+    endOfDayNoticePresentationIds: [],
+    endOfDaySequenceFinished: false,
     challengeFeedback: null,
     dayReport: {
       day: state.day,
@@ -868,7 +878,6 @@ function resumePendingDayReport(state: GameState): GameState {
     || state.currentEvent
     || state.queuedEvents.length > 0
     || (state.endOfDayEvents.length > 0 && !state.endOfDaySequenceFinished)
-    || hasPendingCriticalTaskNotice(state)
   ) return state;
   return createDayReport(state);
 }
@@ -1409,16 +1418,17 @@ export function advanceClockState(
   initialState: GameState,
   elapsedMs: number,
   dayDurationMs: number,
+  ignoreLocalPauses = false,
 ): GameState {
   let nextState = initialState;
-  if (nextState.storyPaused) return nextState;
+  if (nextState.storyPaused && !ignoreLocalPauses) return nextState;
   if (nextState.dayPhase === 'transition') return nextState;
   let remainingMs = elapsedMs;
 
   while (
     remainingMs > 0
     && nextState.gameStatus === 'playing'
-    && !nextState.warningTaskId
+    && (!nextState.warningTaskId || ignoreLocalPauses)
   ) {
     // Task and event notices are non-blocking UI; their visibility must never
     // pause the lunar day or the independent task/event clocks.
@@ -1705,6 +1715,12 @@ export function useGameSimulation({
   seed,
 }: GameSimulationOptions = {}) {
   const [state, setState] = useState<GameState>(() => createInitialState(seed ?? createRandomSeed()));
+  const multiplayerClockRef = useRef<{
+    startedAt: number;
+    dayStartedAt: number;
+    currentDay: number;
+    serverOffsetMs: number;
+  } | null>(null);
 
   useEffect(() => {
     clearSavedGameState();
@@ -1722,7 +1738,26 @@ export function useGameSimulation({
     }));
   }, []);
 
+  const syncMultiplayerClock = useCallback((sync: MultiplayerClockSync | null) => {
+    if (!sync) {
+      multiplayerClockRef.current = null;
+      return;
+    }
+    const { startedAt, dayStartedAt, currentDay, serverTime, clientRequestStartedAt, clientResponseReceivedAt } = sync;
+    if (![startedAt, dayStartedAt, currentDay, serverTime].every(Number.isFinite)) return;
+    const estimatedClientTime = Number.isFinite(clientRequestStartedAt) && Number.isFinite(clientResponseReceivedAt)
+      ? ((clientRequestStartedAt as number) + (clientResponseReceivedAt as number)) / 2
+      : Date.now();
+    multiplayerClockRef.current = {
+      startedAt: startedAt as number,
+      dayStartedAt: dayStartedAt as number,
+      currentDay: currentDay as number,
+      serverOffsetMs: (serverTime as number) - estimatedClientTime,
+    };
+  }, []);
+
   const setStoryPaused = useCallback((paused: boolean) => {
+    if (multiplayerClockRef.current) paused = false;
     setState((current) => current.storyPaused === paused ? current : { ...current, storyPaused: paused });
   }, []);
 
@@ -1786,28 +1821,35 @@ export function useGameSimulation({
     });
   }, []);
 
-  const advanceClock = useCallback((elapsedMs: number) => {
+  const advanceClock = useCallback((elapsedMs: number, absoluteDayElapsed = false) => {
     setState((currentState) => {
+      const sharedClock = multiplayerClockRef.current;
+      const ignoreLocalPauses = Boolean(sharedClock);
       if (
         currentState.gameStatus !== 'playing' ||
-        currentState.storyPaused ||
+        (currentState.storyPaused && !ignoreLocalPauses) ||
         currentState.dayPhase === 'transition' ||
-        currentState.warningTaskId ||
+        (currentState.warningTaskId && !ignoreLocalPauses) ||
         !Number.isFinite(dayDurationMs) ||
         dayDurationMs <= 0
       ) {
         return currentState;
       }
-      return advanceClockState(currentState, elapsedMs, dayDurationMs);
+      if (sharedClock && sharedClock.currentDay !== currentState.day) return currentState;
+      const deltaMs = absoluteDayElapsed
+        ? Math.max(0, elapsedMs - currentState.dayElapsedMs)
+        : elapsedMs;
+      return advanceClockState(currentState, deltaMs, dayDurationMs, ignoreLocalPauses);
     });
   }, [dayDurationMs]);
 
   useEffect(() => {
+    const sharedClock = multiplayerClockRef.current;
     if (
-      !enabled || !state.sceneReady || state.storyPaused ||
+      !enabled || !state.sceneReady || (state.storyPaused && !sharedClock) ||
       state.gameStatus !== 'playing' ||
       state.dayPhase === 'transition' ||
-      state.warningTaskId ||
+      (state.warningTaskId && !sharedClock) ||
       !Number.isFinite(dayDurationMs) ||
       dayDurationMs <= 0
     ) {
@@ -1816,13 +1858,21 @@ export function useGameSimulation({
 
     let previousTime = performance.now();
     const timerId = window.setInterval(() => {
+      const currentSharedClock = multiplayerClockRef.current;
+      if (currentSharedClock) {
+        if (currentSharedClock.currentDay !== state.day) return;
+        const serverNow = Date.now() + currentSharedClock.serverOffsetMs;
+        const targetElapsed = Math.min(dayDurationMs, Math.max(0, serverNow - currentSharedClock.dayStartedAt));
+        if (targetElapsed > 0) advanceClock(targetElapsed, true);
+        return;
+      }
       const currentTime = performance.now();
       const elapsedMs = currentTime - previousTime;
       previousTime = currentTime;
       if (document.visibilityState === 'visible' && elapsedMs > 0) {
         advanceClock(elapsedMs);
       }
-    }, CLOCK_UPDATE_INTERVAL_MS);
+    }, multiplayerClockRef.current ? 100 : CLOCK_UPDATE_INTERVAL_MS);
     const resetClockBaseline = () => {
       previousTime = performance.now();
     };
@@ -1835,6 +1885,7 @@ export function useGameSimulation({
     advanceClock,
     dayDurationMs,
     enabled,
+    state.day,
     state.gameStatus,
     state.dayPhase,
     state.warningTaskId,
@@ -1871,13 +1922,17 @@ export function useGameSimulation({
   useEffect(() => {
     if (state.dayPhase !== 'transition') return undefined;
     const transitionDay = state.day;
+    const sharedClock = multiplayerClockRef.current;
+    const transitionDuration = sharedClock
+      ? Math.max(0, sharedClock.dayStartedAt - (Date.now() + sharedClock.serverOffsetMs))
+      : DAY_TRANSITION_DURATION_MS;
     const timerId = window.setTimeout(() => {
       setState((currentState) => (
         currentState.dayPhase === 'transition' && currentState.day === transitionDay
           ? { ...currentState, dayPhase: 'active', dayElapsedMs: 0, schedulerElapsedMs: 0 }
           : currentState
       ));
-    }, DAY_TRANSITION_DURATION_MS);
+    }, transitionDuration);
     return () => window.clearTimeout(timerId);
   }, [dayDurationMs, state.day, state.dayPhase]);
 
@@ -2177,7 +2232,6 @@ export function useGameSimulation({
         currentState.gameStatus !== 'playing'
         || currentState.dayPhase !== 'report'
         || !currentState.dayReport
-        || hasPendingCriticalTaskNotice(currentState)
       ) {
         return currentState;
       }
@@ -2226,6 +2280,9 @@ export function useGameSimulation({
         queuedEvents: [],
         endOfDayEvents: [],
         endOfDaySequenceFinished: false,
+        endOfDayNoticeHistory: [],
+        endOfDayNoticePresentationIds: [],
+        taskFailureNotices: [],
         eventPhase: 'idle',
         eventDrainElapsedMs: 0,
         eventEffectId: null,
@@ -2627,6 +2684,7 @@ export function useGameSimulation({
     ...state,
     setSceneReady,
     setMissionProfile,
+    syncMultiplayerClock,
     setStoryPaused,
     markLocationVisited,
     unlockScienceDiscovery,

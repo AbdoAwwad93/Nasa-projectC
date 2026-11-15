@@ -201,10 +201,9 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
   const visibleEndOfDayNotices = simulation.endOfDayNoticeHistory.filter((event) => (
     simulation.endOfDayNoticePresentationIds.includes(getEventOccurrenceKey(event))
   ));
-  const hasPendingCriticalTaskNotice = (simulation.taskFailureNotices ?? []).length > 0
-    || simulation.endOfDayNoticeHistory.length > 0;
 
   const [isLoading, setIsLoading] = useState(true);
+  const [multiplayerHostId, setMultiplayerHostId] = useState(commanderProfile?.hostId);
   const outpostControlsDisabled = isLoading || tutorialActive;
   const [cameraMode, setCameraMode] = useState('free');
   const [pointerLocked, setPointerLocked] = useState(false);
@@ -514,10 +513,22 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     let live = true;
     const pollCrew = async () => {
       try {
+        const clientRequestStartedAt = Date.now();
         const response = await fetchLocalNetwork(`${MULTIPLAYER_API}/api/rooms/${encodeURIComponent(commanderProfile.roomCode)}`);
         if (!response.ok) return;
         const { room } = await response.json();
+        const clientResponseReceivedAt = Date.now();
         if (!live) return;
+        const hostIsAheadOfLocalDay = room.currentDay > simulation.day && simulation.dayPhase !== 'report';
+        if (!hostIsAheadOfLocalDay) {
+          simulation.syncMultiplayerClock({ ...room, clientRequestStartedAt, clientResponseReceivedAt });
+        }
+        setMultiplayerHostId(room.hostId);
+        if (room.finished && simulation.dayPhase === 'report' && simulation.gameStatus === 'playing') {
+          simulation.advanceDay();
+        } else if (room.currentDay > simulation.day && simulation.dayPhase === 'report') {
+          simulation.advanceDay();
+        }
         engineRef.current?.setCrewRovers?.(room.rovers ?? [], commanderProfile.playerId);
         const currentTime = Date.now();
         const nextCrewPositions = room.players.filter((player) => (
@@ -575,7 +586,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     void pollCrew();
     const timer = window.setInterval(pollCrew, 500);
     return () => { live = false; window.clearInterval(timer); };
-  }, [commanderProfile, simulation.dailyChallenges, simulation.completeDailyChallenge, simulation.currentEvent, simulation.queuedEvents, simulation.eventPhase, simulation.makeDecision, simulation.abandonEvent, showCrewNotification]);
+  }, [commanderProfile, simulation.day, simulation.dayPhase, simulation.gameStatus, simulation.syncMultiplayerClock, simulation.advanceDay, simulation.dailyChallenges, simulation.completeDailyChallenge, simulation.currentEvent, simulation.queuedEvents, simulation.eventPhase, simulation.makeDecision, simulation.abandonEvent, showCrewNotification]);
   useEffect(() => () => window.clearTimeout(crewNotificationTimerRef.current), []);
   useEffect(() => {
     if (!commanderProfile?.multiplayer || !commanderProfile.roomCode || isLoading) return undefined;
@@ -610,10 +621,14 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     engineRef.current?.setCrewMarkers?.(crewPositions);
   }, [crewPositions, isLoading]);
   useEffect(() => {
+    if (commanderProfile?.multiplayer) {
+      simulation.setStoryPaused(false);
+      return undefined;
+    }
     if (!isGameplayPortrait && !storyMoment && storyRewardDay === null && !archiveOpen && !iceSampleOpen && !radioOpen && !noorCall) return undefined;
     simulation.setStoryPaused(true);
     return () => simulation.setStoryPaused(false);
-  }, [simulation.setStoryPaused, isGameplayPortrait, storyMoment, storyRewardDay, archiveOpen, iceSampleOpen, radioOpen, noorCall]);
+  }, [simulation.setStoryPaused, commanderProfile?.multiplayer, isGameplayPortrait, storyMoment, storyRewardDay, archiveOpen, iceSampleOpen, radioOpen, noorCall]);
 
   useEffect(() => {
     const reportDay = simulation.dayPhase === 'report' ? simulation.dayReport?.day : null;
@@ -646,6 +661,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
   }, [simulation.day, simulation.dayPhase]);
 
   useEffect(() => {
+    if (commanderProfile?.multiplayer) return;
     const jobs = simulation.dailyChallenges;
     if (!jobs.length || jobs.some((task) => task.status !== 'completed') || rewardedStoryDayRef.current === simulation.day || taskRecapSpeaking) return;
     const reportIsReady = simulation.dayPhase === 'report';
@@ -653,7 +669,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     rewardedStoryDayRef.current = simulation.day;
     setNarrationMilestoneMessage(`You are amazing, ${getPlayerAddress(simulation.commanderName)}! You finished every job today! I’m so proud of you. You kept the outpost safer, learned new things, and earned story time with me!`);
     setStoryRewardDay(simulation.day);
-  }, [simulation.dailyChallenges, simulation.day, simulation.dayPhase, simulation.currentEvent, simulation.queuedEvents, noorCall, storyMoment, taskExperienceId, eventOptionsOpen, simulation.warningTaskId, taskRecapSpeaking, narrationSpeechInProgress, simulation.commanderName]);
+  }, [commanderProfile?.multiplayer, simulation.dailyChallenges, simulation.day, simulation.dayPhase, simulation.currentEvent, simulation.queuedEvents, noorCall, storyMoment, taskExperienceId, eventOptionsOpen, simulation.warningTaskId, taskRecapSpeaking, narrationSpeechInProgress, simulation.commanderName]);
   useEffect(() => {
     if (simulation.dayPhase !== 'transition' || shownStoryDayRef.current === simulation.day) return;
     shownStoryDayRef.current = simulation.day;
@@ -1267,8 +1283,8 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     || radioOpen
     || Boolean(noorCall)
     || Boolean(simulation.warningTaskId)
-    || (simulation.dayPhase === 'report' && simulation.dayReport && dayReportReadyDay === simulation.dayReport.day && storyRewardDay === null && !hasPendingCriticalTaskNotice)
-    || (simulation.gameStatus !== 'playing' && simulation.eventPhase !== 'resolving' && !hasPendingCriticalTaskNotice);
+    || (simulation.dayPhase === 'report' && simulation.dayReport && dayReportReadyDay === simulation.dayReport.day && storyRewardDay === null)
+    || simulation.gameStatus !== 'playing';
   const touchControlsVisible = showTouchControls
     && !mapIsOpen
     && !dailyTasksOpen
@@ -1791,6 +1807,32 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
       simulation.abandonEvent(occurrenceId);
     }
   };
+  const advanceDayTogether = async () => {
+    const isMultiplayer = commanderProfile?.multiplayer && commanderProfile.roomCode;
+    if (isMultiplayer && multiplayerHostId !== commanderProfile.playerId) return;
+    if (isMultiplayer) {
+      try {
+        const clientRequestStartedAt = Date.now();
+        const response = await fetchLocalNetwork(`${MULTIPLAYER_API}/api/rooms/${encodeURIComponent(commanderProfile.roomCode)}/advance-day`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            playerId: commanderProfile.playerId,
+            day: simulation.day,
+            finish: simulation.day >= simulation.maxDays,
+          }),
+        });
+        const result = await response.json();
+        const clientResponseReceivedAt = Date.now();
+        if (!response.ok) throw new Error(result.error || 'Could not sync the next mission day with the crew.');
+        simulation.syncMultiplayerClock({ ...result.room, clientRequestStartedAt, clientResponseReceivedAt });
+      } catch (error) {
+        showCrewNotification(`day-advance-error-${Date.now()}`, error instanceof Error ? error.message : 'Could not sync the next mission day with the crew.');
+        return;
+      }
+    }
+    simulation.advanceDay();
+  };
   return (
     <div
       className={`lunar-root${insidePanel.visible ? ' is-inside' : ''}${showOrientationGuidance ? ' is-gameplay-portrait' : ''}${mapIsOpen ? ' is-map-open' : ''}`}
@@ -1939,7 +1981,9 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
           <span>{simulation.remainingDays} days left</span>
           <span className="lunar-status-divider">·</span>
           <span>
-            {simulation.warningTaskId
+            {commanderProfile?.multiplayer && (simulation.warningTaskId || simulation.isPaused)
+              ? 'Crew timer running'
+              : simulation.warningTaskId
                   ? 'Paused for a choice'
               : simulation.isPaused
                 ? 'Paused for a choice'
@@ -3216,7 +3260,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
           </section>
         </div>
       )}
-      {simulation.dayPhase === 'report' && simulation.dayReport && dayReportReadyDay === simulation.dayReport.day && storyRewardDay === null && !hasPendingCriticalTaskNotice && (
+      {simulation.dayPhase === 'report' && simulation.dayReport && dayReportReadyDay === simulation.dayReport.day && storyRewardDay === null && (
         <div className="lunar-day-transition" role="dialog" aria-modal="true" aria-labelledby="day-report-title">
           <section className="lunar-day-report">
             <div className="lunar-day-report-body">
@@ -3283,14 +3327,19 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
               })}
             </div>
             </div>
-            <button type="button" className="lunar-day-advance" onClick={simulation.advanceDay}>
-              {simulation.dayReport.day >= simulation.maxDays ? 'Finish mission' : 'Next day'}
-            </button>
+            {commanderProfile?.multiplayer && multiplayerHostId !== commanderProfile.playerId ? (
+              <p className="lunar-day-advance-wait" role="status">
+                {simulation.day >= simulation.maxDays ? 'Waiting for the host to finish the mission…' : `Waiting for the host to start Day ${simulation.day + 1}…`}
+              </p>
+            ) : (
+              <button type="button" className="lunar-day-advance" onClick={() => void advanceDayTogether()}>
+                {simulation.dayReport.day >= simulation.maxDays ? 'Finish mission' : 'Next day'}
+              </button>
+            )}
           </section>
         </div>
       )}
-      {simulation.gameStatus !== 'playing' && simulation.eventPhase !== 'resolving'
-        && !hasPendingCriticalTaskNotice && (
+      {simulation.gameStatus !== 'playing' && (
         <EndGameReport
           status={simulation.gameStatus}
           day={simulation.day}

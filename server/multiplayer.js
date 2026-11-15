@@ -5,6 +5,7 @@ import { networkInterfaces } from 'node:os';
 const rooms = new Map();
 const PORT = Number(process.env.PORT || 3001);
 const MAX_PLAYERS = 8;
+const DAY_TRANSITION_DURATION_MS = 5000;
 const HOST_IP = Object.values(networkInterfaces()).flat().find((address) => (
   address?.family === 'IPv4' && !address.internal && isPrivateIpv4(address.address)
 ))?.address || '127.0.0.1';
@@ -12,7 +13,7 @@ const send = (res, status, data) => {
   res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(data));
 };
-const roomView = (room) => ({ code: room.code, hostId: room.hostId, started: room.started, cancelled: Boolean(room.cancelled), seed: room.seed ?? null, players: room.players, completedTasks: room.completedTasks, events: room.events, rovers: (room.rovers ?? []).filter((rover) => Date.now() - rover.updatedAt < 2500) });
+const roomView = (room) => ({ code: room.code, hostId: room.hostId, started: room.started, startedAt: room.startedAt ?? null, currentDay: room.currentDay ?? 1, dayStartedAt: room.dayStartedAt ?? null, finished: Boolean(room.finished), serverTime: Date.now(), cancelled: Boolean(room.cancelled), seed: room.seed ?? null, players: room.players, completedTasks: room.completedTasks, events: room.events, rovers: (room.rovers ?? []).filter((rover) => Date.now() - rover.updatedAt < 2500) });
 
 const server = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, {});
@@ -23,11 +24,11 @@ const server = createServer(async (req, res) => {
       const playerId = String(body.playerId || randomUUID());
       let code;
       do { code = randomInt(0, 1_000_000).toString().padStart(6, '0'); } while (rooms.has(code));
-      const room = { code, hostId: playerId, started: false, players: [{ id: playerId, name: clean(body.name), ready: true }], completedTasks: [], events: [], voiceSignals: [], rovers: [] };
+      const room = { code, hostId: playerId, started: false, currentDay: 1, finished: false, players: [{ id: playerId, name: clean(body.name), ready: true }], completedTasks: [], events: [], voiceSignals: [], rovers: [] };
       rooms.set(code, room);
       return send(res, 201, { playerId, room: roomView(room) });
     }
-    const roomMatch = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]+)(?:\/(join|ready|start|tasks|events|leave|cancel|voice|players\/position))?$/i);
+    const roomMatch = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]+)(?:\/(join|ready|start|advance-day|tasks|events|leave|cancel|voice|players\/position))?$/i);
     if (!roomMatch) return send(res, 404, { error: 'Not found' });
     const [, rawCode, action] = roomMatch;
     const room = rooms.get(rawCode.toUpperCase());
@@ -99,12 +100,32 @@ const server = createServer(async (req, res) => {
     }
     if (action === 'start' && req.method === 'POST') {
       if (room.cancelled) return send(res, 410, { error: 'This room was cancelled' });
+      if (room.started) return send(res, 409, { error: 'Mission already started' });
       if (room.hostId !== body.playerId) return send(res, 403, { error: 'Only the host can start' });
       if (!room.players.length || room.players.some((player) => !player.ready)) return send(res, 409, { error: 'Everyone must be ready' });
       room.started = true;
       room.seed = Number.parseInt(randomBytes(4).toString('hex'), 16);
-      room.events.push({ id: randomUUID(), type: 'mission-started', at: Date.now() });
+      room.startedAt = Date.now();
+      room.currentDay = 1;
+      room.dayStartedAt = room.startedAt;
+      room.finished = false;
+      room.events.push({ id: randomUUID(), type: 'mission-started', at: room.startedAt });
       return send(res, 200, { room: roomView(room), seed: room.seed });
+    }
+    if (action === 'advance-day' && req.method === 'POST') {
+      if (!room.started || room.cancelled || room.finished) return send(res, 409, { error: 'This mission cannot advance right now' });
+      if (room.hostId !== body.playerId) return send(res, 403, { error: 'Only the host can advance the mission day' });
+      if (Number(body.day) !== room.currentDay) return send(res, 409, { error: 'The room is already on a different mission day' });
+      const at = Date.now();
+      if (body.finish === true) {
+        room.finished = true;
+        room.events.push({ id: randomUUID(), type: 'mission-finished', day: room.currentDay, playerId: body.playerId, at });
+      } else {
+        room.currentDay += 1;
+        room.dayStartedAt = at + DAY_TRANSITION_DURATION_MS;
+        room.events.push({ id: randomUUID(), type: 'day-advanced', day: room.currentDay, playerId: body.playerId, startedAt: room.dayStartedAt, at });
+      }
+      return send(res, 200, { room: roomView(room) });
     }
     if (action === 'tasks' && req.method === 'POST') {
       const player = room.players.find((entry) => entry.id === body.playerId);

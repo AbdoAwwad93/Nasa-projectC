@@ -63,7 +63,9 @@ export default function MultiplayerLobby({ onStart, onRoomExit }) {
   const refresh = useCallback(async () => {
     if (!roomCode) return;
     try {
+      const clientRequestStartedAt = Date.now();
       const result = await request(`/api/rooms/${encodeURIComponent(roomCode)}`, undefined, roomApi);
+      const clientResponseReceivedAt = Date.now();
       if (result.room.cancelled) {
         if (!roomExitHandledRef.current) {
           roomExitHandledRef.current = true;
@@ -77,7 +79,21 @@ export default function MultiplayerLobby({ onStart, onRoomExit }) {
       if (result.room.started && !missionLaunchedRef.current) {
         missionLaunchedRef.current = true;
         const ownName = result.room.players.find((p) => p.id === playerId)?.name || name.trim();
-        onStart({ commanderName: ownName, baseName: 'Moonbase Alpha', multiplayer: true, roomCode, playerId, seed: result.room.seed });
+        onStart({
+          commanderName: ownName,
+          baseName: 'Moonbase Alpha',
+          multiplayer: true,
+          roomCode,
+          playerId,
+          hostId: result.room.hostId,
+          seed: result.room.seed,
+          startedAt: result.room.startedAt,
+          dayStartedAt: result.room.dayStartedAt,
+          currentDay: result.room.currentDay,
+          serverTime: result.room.serverTime,
+          clientRequestStartedAt,
+          clientResponseReceivedAt,
+        });
       }
     } catch (err) { showError(err); }
   }, [roomCode, roomApi, playerId, name, onStart, onRoomExit]);

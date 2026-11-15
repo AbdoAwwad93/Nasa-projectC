@@ -3042,6 +3042,19 @@
   transform: translateY(-1px);
 }
 
+.lunar-day-advance-wait {
+  width: 100%;
+  margin: 0;
+  padding: 15px 18px;
+  border: 1px solid rgba(127, 240, 255, 0.2);
+  border-radius: 9px;
+  color: rgba(220, 240, 245, 0.72);
+  background: rgba(10, 25, 36, 0.68);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
 .lunar-day-transition-opening {
   text-align: center;
   animation: lunar-day-black-out 5000ms ease-in-out both;
