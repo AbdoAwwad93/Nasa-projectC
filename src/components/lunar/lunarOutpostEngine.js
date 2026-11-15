@@ -28,6 +28,10 @@ export const PLAYER_CAMERA = {
   maxHeight: 40,
   walkSpeed: 2, // slow, deliberate ~1 m/s lunar shuffle
   sprintSpeed: 10, // shift run, about lunar-rover pace
+  touchWalkSpeed: 3.2,
+  touchSprintSpeed: 7.5,
+  touchLookSensitivity: 0.0034,
+  touchPitchSensitivity: 0.0026,
   acceleration: 8, // suit + regolith inertia: ease into the target speed
   deceleration: 6, // and glide to a stop instead of snapping
   gravity: 3.1, // ~1.6 m/s^2 — the Moon's surface gravity
@@ -224,6 +228,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
   const keys = new Set();
   let touchMoveX = 0;
   let touchMoveY = 0;
+  let touchSprinting = false;
   let controlsEnabledBeforeSuspend = controls.enabled;
   // Physical-key aliases: keyboard layout switches (including the Shift combos
   // that flip layouts) can make event.key differ between a press and its
@@ -239,6 +244,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
     keys.clear();
     touchMoveX = 0;
     touchMoveY = 0;
+    touchSprinting = false;
   };
   const firstPersonStart = new THREE.Vector3();
   // Ground level under firstPersonStart, kept apart from the eye height so the
@@ -4642,10 +4648,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
       // A fresh press launches the hop; holding the key does not re-launch
       // on landing, so jumps stay deliberate. Interiors use the same launch and
       // the room ceiling caps the arc.
-      if (!event.repeat && !airborne) {
-        airborne = true;
-        jumpVelocity = PLAYER_CAMERA.jumpSpeed;
-      }
+      if (!event.repeat) jumpPlayer();
       return;
     }
     if (['first-person', 'interior'].includes(cameraMode) && ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'enter'].includes(key)) {
@@ -4683,6 +4686,24 @@ export function createLunarEngine(canvas, callbacks = {}) {
     touchMoveY = THREE.MathUtils.clamp(Number(y) || 0, -1, 1);
   }
 
+  function setTouchSprint(sprinting) {
+    if (isGameplaySuspended) return;
+    touchSprinting = Boolean(sprinting);
+  }
+
+  function jumpPlayer() {
+    if (
+      isGameplaySuspended
+      || eventCinematic
+      || dayStartCameraTransition
+      || !['first-person', 'interior'].includes(cameraMode)
+      || airborne
+    ) return false;
+    airborne = true;
+    jumpVelocity = PLAYER_CAMERA.jumpSpeed;
+    return true;
+  }
+
   function lookTouch(deltaX, deltaY) {
     if (isGameplaySuspended || eventCinematic || dayStartCameraTransition) return;
     if (roverCameraActive) {
@@ -4695,9 +4716,9 @@ export function createLunarEngine(canvas, callbacks = {}) {
       return;
     }
     if (!['first-person', 'interior'].includes(cameraMode)) return;
-    firstPersonYaw -= deltaX * 0.0022;
+    firstPersonYaw -= deltaX * PLAYER_CAMERA.touchLookSensitivity;
     firstPersonPitch = THREE.MathUtils.clamp(
-      firstPersonPitch - deltaY * 0.0018,
+      firstPersonPitch - deltaY * PLAYER_CAMERA.touchPitchSensitivity,
       -PLAYER_CAMERA.pitchLimit,
       PLAYER_CAMERA.pitchLimit,
     );
@@ -5461,7 +5482,12 @@ export function createLunarEngine(canvas, callbacks = {}) {
 
     // Gait: identical acceleration and glide in every space. Shift runs, which
     // matters on the surface and keeps the feel consistent indoors.
-    const moveSpeed = keys.has('shift') ? PLAYER_CAMERA.sprintSpeed : PLAYER_CAMERA.walkSpeed;
+    const touchMoving = Math.abs(touchMoveX) > 0.02 || Math.abs(touchMoveY) > 0.02;
+    const moveSpeed = touchSprinting
+      ? PLAYER_CAMERA.touchSprintSpeed
+      : touchMoving
+        ? PLAYER_CAMERA.touchWalkSpeed
+        : keys.has('shift') ? PLAYER_CAMERA.sprintSpeed : PLAYER_CAMERA.walkSpeed;
     const desiredX = wantsMove ? firstPersonDirection.x * moveSpeed : 0;
     const desiredZ = wantsMove ? firstPersonDirection.z * moveSpeed : 0;
     const rateStep = (wantsMove ? PLAYER_CAMERA.acceleration : PLAYER_CAMERA.deceleration) * dt;
@@ -6196,6 +6222,8 @@ export function createLunarEngine(canvas, callbacks = {}) {
     clearEventPresentations,
     returnToOutpostOverview,
     setTouchMove,
+    setTouchSprint,
+    jumpPlayer,
     lookTouch,
     setGameplaySuspended,
     toggleCameraMode,

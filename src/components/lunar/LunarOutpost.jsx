@@ -209,6 +209,8 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
   const [isGameplayPortrait, setIsGameplayPortrait] = useState(isPortraitGameplayViewport);
   const joystickPointerRef = useRef(null);
   const lookPointerRef = useRef(null);
+  const sprintPointerRef = useRef(null);
+  const [touchSprintActive, setTouchSprintActive] = useState(false);
   const [roverReady, setRoverReady] = useState(false);
   const [roverCameraActive, setRoverCameraActive] = useState(false);
   const [roverLink, setRoverLink] = useState(null);
@@ -268,6 +270,26 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
   };
   const stopTouchLook = (event) => {
     if (lookPointerRef.current?.pointerId === event.pointerId) lookPointerRef.current = null;
+  };
+  const startTouchSprint = (event) => {
+    if (sprintPointerRef.current !== null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    sprintPointerRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setTouchSprintActive(true);
+    engineRef.current?.setTouchSprint?.(true);
+  };
+  const stopTouchSprint = (event) => {
+    if (sprintPointerRef.current !== event.pointerId) return;
+    sprintPointerRef.current = null;
+    setTouchSprintActive(false);
+    engineRef.current?.setTouchSprint?.(false);
+  };
+  const jumpFromTouch = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    engineRef.current?.jumpPlayer?.();
   };
   const [prompt, setPrompt] = useState({ type: null, data: null });
   const [insidePanel, setInsidePanel] = useState({
@@ -1189,6 +1211,24 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
   const mapIsOpen = mapOpen
     && mapOpenedAtDecisionCount === simulation.decisionHistory.length
     && simulation.gameStatus === 'playing';
+  const touchControlsVisible = showTouchControls
+    && !mapIsOpen
+    && !dailyTasksOpen
+    && !statusOpen
+    && !taskExperienceId;
+  const showPlayerTouchActions = touchControlsVisible && !roverCameraActive;
+  useEffect(() => {
+    if (showPlayerTouchActions && touchControlsVisible) return;
+    joystickPointerRef.current = null;
+    lookPointerRef.current = null;
+    sprintPointerRef.current = null;
+    setTouchSprintActive(false);
+    engineRef.current?.setTouchSprint?.(false);
+    engineRef.current?.setTouchMove?.(0, 0);
+    const joystick = containerRef.current?.querySelector('.lunar-joystick');
+    joystick?.style.setProperty('--stick-x', '0px');
+    joystick?.style.setProperty('--stick-y', '0px');
+  }, [showPlayerTouchActions, touchControlsVisible]);
   const mapSpan = mapSnapshot
     ? Math.max(
       mapSnapshot.bounds.maxX - mapSnapshot.bounds.minX,
@@ -1649,8 +1689,8 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
           </div>
         </section>
       )}
-      {showTouchControls && (
-        <div className={`lunar-touch-controls${mapIsOpen ? ' is-map-open' : ''}`} aria-label="Touch gameplay controls">
+      {touchControlsVisible && (
+        <div className="lunar-touch-controls" aria-label="Touch gameplay controls">
           <div
             className="lunar-touch-zone"
             aria-label="Drag to look around"
@@ -1673,8 +1713,56 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
           >
             <span className="lunar-joystick-ring" aria-hidden="true" />
             <span className="lunar-joystick-knob" aria-hidden="true" />
+            <span className="lunar-joystick-label" aria-hidden="true">MOVE</span>
           </div>
           <span className="lunar-touch-hint" aria-hidden="true">DRAG TO LOOK</span>
+          {showPlayerTouchActions && (
+            <div className="lunar-touch-actions" aria-label="Player movement actions">
+              <button
+                type="button"
+                className="lunar-touch-action lunar-touch-jump"
+                aria-label="Jump"
+                onPointerDown={jumpFromTouch}
+                onClick={(event) => {
+                  if (event.detail === 0) engineRef.current?.jumpPlayer?.();
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6" /></svg>
+                <span>JUMP</span>
+              </button>
+              <button
+                type="button"
+                className={`lunar-touch-action lunar-touch-sprint${touchSprintActive ? ' is-active' : ''}`}
+                aria-label="Hold to sprint"
+                aria-pressed={touchSprintActive}
+                onPointerDown={startTouchSprint}
+                onPointerUp={stopTouchSprint}
+                onPointerCancel={stopTouchSprint}
+                onLostPointerCapture={stopTouchSprint}
+                onKeyDown={(event) => {
+                  if ((event.key === ' ' || event.key === 'Enter') && !event.repeat) {
+                    event.preventDefault();
+                    setTouchSprintActive(true);
+                    engineRef.current?.setTouchSprint?.(true);
+                  }
+                }}
+                onKeyUp={(event) => {
+                  if (event.key === ' ' || event.key === 'Enter') {
+                    setTouchSprintActive(false);
+                    engineRef.current?.setTouchSprint?.(false);
+                  }
+                }}
+                onBlur={() => {
+                  setTouchSprintActive(false);
+                  engineRef.current?.setTouchSprint?.(false);
+                }}
+                onContextMenu={(event) => event.preventDefault()}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 10-13h-7l1-7Z" /></svg>
+                <span>SPRINT</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
       <div className="lunar-grain" />
