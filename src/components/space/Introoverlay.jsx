@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import NeonTypewriter from './NeonTypewriter';
+import NeonTypewriter from './Neontypewriter';
 
 const FINAL_LINES = ['Your Moon expedition starts here.'];
 
