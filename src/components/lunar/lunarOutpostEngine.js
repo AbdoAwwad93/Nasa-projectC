@@ -5798,18 +5798,22 @@ export function createLunarEngine(canvas, callbacks = {}) {
   }
 
   function getCrewPosition() {
+    // Event cinematics temporarily move the render camera to frame an outpost
+    // problem. Keep publishing the player's pre-cinematic world position so
+    // other crew markers remain anchored while this camera transition plays.
+    const playerCameraPosition = eventCinematic?.snapshot?.cameraPosition ?? camera.position;
     if (cameraMode === 'interior') {
       return {
-        x: camera.position.x,
-        y: camera.position.y - playerCameraHeight,
-        z: camera.position.z,
+        x: playerCameraPosition.x,
+        y: playerCameraPosition.y - playerCameraHeight,
+        z: playerCameraPosition.z,
         yaw: firstPersonYaw,
         moving: firstPersonVelocity.length() > 0.2,
         location: 'interior',
         componentId: activeComponentTarget?.id ?? null,
       };
     }
-    const position = cameraMode === 'first-person' ? camera.position : controls.target;
+    const position = cameraMode === 'first-person' ? playerCameraPosition : controls.target;
     const groundY = cameraMode === 'first-person'
       ? position.y - playerCameraHeight
       : sampleGroundHeight(position.x, position.z) ?? position.y;
