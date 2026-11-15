@@ -57,6 +57,20 @@ export default function MissionStoryIntro({ onBegin }) {
     else onBegin({ commanderName: commanderName.trim() || 'Commander', baseName: baseName.trim() || 'Moonbase Alpha' });
   };
 
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onBegin({ commanderName: commanderName.trim() || 'Commander', baseName: baseName.trim() || 'Moonbase Alpha' });
+      } else if (event.key === 'Enter' && !event.target.closest?.('button')) {
+        event.preventDefault();
+        goForward();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [step, commanderName, baseName, onBegin]);
+
   return (
     <div className="mission-story-backdrop" role="dialog" aria-modal="true" aria-labelledby="mission-story-title">
       <section className="mission-story-intro">
@@ -80,6 +94,7 @@ export default function MissionStoryIntro({ onBegin }) {
             <button type="button" className="mission-story-voice" onClick={() => setVoiceEnabled((enabled) => !enabled)}>{voiceEnabled ? 'Voice on' : 'Hear the message'}</button>
             <button type="button" className="mission-story-next" onClick={goForward}>{step === OPENING.length - 1 ? 'Deploy to outpost' : 'Continue'} <span aria-hidden="true">→</span></button>
           </div>
+          <small className="mission-story-keyboard-help"><kbd>Enter</kbd> continue <span>·</span> <kbd>Esc</kbd> skip intro</small>
           <div className="mission-story-progress" aria-label={`Opening ${step + 1} of ${OPENING.length}`}>
             {OPENING.map((entry, index) => <i key={entry.eyebrow} className={index <= step ? 'is-lit' : ''} />)}
           </div>

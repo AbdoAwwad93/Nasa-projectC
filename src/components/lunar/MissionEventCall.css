@@ -1,4 +1,6 @@
 .mission-event-call-backdrop { position: fixed; z-index: 6500; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(2, 8, 16, .82); backdrop-filter: blur(9px); animation: mission-event-call-in .24s ease-out both; }
+.mission-event-call-dismiss { position: fixed; z-index: 2; top: max(18px, env(safe-area-inset-top)); right: max(20px, env(safe-area-inset-right)); display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid rgba(160, 224, 226, .35); border-radius: 50%; color: #e8fbff; background: rgba(8, 22, 32, .88); font-size: 1.35rem; cursor: pointer; }
+.mission-event-call-dismiss:hover { border-color: #aaf4fa; background: rgba(23, 66, 76, .96); }
 .mission-event-incoming-card,.mission-event-call-screen { position: relative; width: min(780px, 100%); overflow: hidden; border: 1px solid rgba(106, 229, 218, .55); border-radius: 20px; color: #edfaff; background: linear-gradient(145deg, #102635, #08141f 72%); box-shadow: 0 24px 90px rgba(0,0,0,.68), 0 0 55px rgba(80, 219, 213, .16); }
 .mission-event-incoming-card { display: grid; grid-template-columns: 150px 1fr; align-items: center; min-height: 250px; padding: 22px 30px; }
 .mission-event-incoming-signal { display: grid; justify-items: center; gap: 10px; color: #9de7dc; }

@@ -169,6 +169,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
 
   let isDestroyed = false;
   let isGameplaySuspended = false;
+  let isPointerLockBlocked = false;
   let animId = null;
   let sceneReadyReported = false;
   let initialCameraSettledReported = false;
@@ -213,8 +214,6 @@ export function createLunarEngine(canvas, callbacks = {}) {
 
   // The establishing shot should only be replaced by the outpost framing if
   // the player hasn't taken over the camera while the base was loading.
-  let freeCameraAdjusted = false;
-  controls.addEventListener('start', () => { freeCameraAdjusted = true; });
 
   let earthMesh = null;
   let closeupEarthMesh = null;
@@ -251,8 +250,6 @@ export function createLunarEngine(canvas, callbacks = {}) {
   // spawn point follows PLAYER_CAMERA.height when it changes at runtime.
   let firstPersonStartGroundY = 0;
   const firstPersonLookAt = new THREE.Vector3();
-  const savedFreePosition = new THREE.Vector3();
-  const savedFreeTarget = new THREE.Vector3();
   const firstPersonDirection = new THREE.Vector3();
   const firstPersonForward = new THREE.Vector3();
   const firstPersonRight = new THREE.Vector3();
@@ -480,7 +477,6 @@ export function createLunarEngine(canvas, callbacks = {}) {
   let firstPersonYaw = 0;
   let firstPersonPitch = 0;
   let dayStartCameraTransition = null;
-  let initialCameraApproach = null;
   let outpostOverview = null;
 
   // Prompts state tracked for callback updates with zero GC stringify
@@ -508,6 +504,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
   }
 
   function ensurePointerLocked() {
+    if (isPointerLockBlocked) return;
     // Best-effort: keep the player in moving/looking state when entering
     // interiors. If lock was lost (e.g. Esc), try to re-acquire it.
     if (document.pointerLockElement !== canvas) {
@@ -1097,11 +1094,9 @@ export function createLunarEngine(canvas, callbacks = {}) {
     scene.background = outsideBackground ?? scene.background;
     controls.enabled = false;
     earthViewActive = false;
-    cameraMode = 'free';
-    freeCameraAdjusted = false;
+    cameraMode = 'first-person';
     camera.fov = 56;
     camera.updateProjectionMatrix();
-    onModeChange(cameraMode);
     onInsidePanelChange({ visible: false, label: '', buttonText: '' });
     setPrompt(null);
     consoleEditMode = false;
@@ -1111,7 +1106,11 @@ export function createLunarEngine(canvas, callbacks = {}) {
     const standPosition = playerStandPosition();
     const looker = new THREE.PerspectiveCamera();
     looker.position.copy(standPosition);
+    looker.rotation.order = 'YXZ';
     looker.lookAt(firstPersonLookAt);
+    firstPersonYaw = looker.rotation.y;
+    firstPersonPitch = looker.rotation.x;
+    onModeChange(cameraMode);
     dayStartCameraTransition = {
       elapsed: 0,
       duration: 2.8,
@@ -1120,7 +1119,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
       destination: standPosition,
       destinationQuaternion: looker.quaternion.clone(),
       focus: outpostOverview.focus.clone(),
-      enableControlsOnFinish: true,
+      enableControlsOnFinish: false,
     };
   }
 
@@ -2444,12 +2443,14 @@ export function createLunarEngine(canvas, callbacks = {}) {
               outpostCenter.z + OUTPOST_VIEW_DISTANCE * 0.95,
             ),
           };
-          if (cameraMode === 'free' && !earthViewActive && !freeCameraAdjusted) {
-            initialCameraApproach = {
-              focus: overviewFocus.clone(),
-              destination: outpostOverview.destination.clone(),
-            };
-          }
+          cameraMode = 'first-person';
+          camera.position.copy(playerStandPosition());
+          camera.rotation.order = 'YXZ';
+          camera.lookAt(firstPersonLookAt);
+          firstPersonYaw = camera.rotation.y;
+          firstPersonPitch = camera.rotation.x;
+          controls.enabled = false;
+          onModeChange(cameraMode);
 
           outpost.traverse(object => {
             if (object.isMesh) {
@@ -4045,7 +4046,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
     controls.target.copy(roverCameraSavedTarget);
     controls.enabled = cameraMode === 'free';
     if (controls.enabled) controls.update();
-    if (cameraMode === 'first-person' && roverCameraWasPointerLocked) {
+    if (cameraMode === 'first-person' && roverCameraWasPointerLocked && !isPointerLockBlocked) {
       canvas.requestPointerLock?.();
     }
   }
@@ -4068,32 +4069,6 @@ export function createLunarEngine(canvas, callbacks = {}) {
   // Called from the HUD / prompt button with an explicit rover id.
   function controlRover(roverId) {
     return beginRoverControl(roverId, { remote: commandCenterInteriorActive });
-  }
-
-  function toggleCameraMode() {
-    if (eventCinematic || roverCameraActive) return;
-    if (cameraMode === 'free' && (!outpostRoot || !heightGrid)) return;
-    if (cameraMode === 'free') {
-      savedFreePosition.copy(camera.position);
-      savedFreeTarget.copy(controls.target);
-      cameraMode = 'first-person';
-      controls.enabled = false;
-      camera.position.copy(playerStandPosition());
-      camera.rotation.order = 'YXZ';
-      camera.lookAt(firstPersonLookAt);
-      firstPersonYaw = camera.rotation.y;
-      firstPersonPitch = camera.rotation.x;
-      onModeChange('first-person');
-      canvas.requestPointerLock?.();
-    } else if (cameraMode === 'first-person') {
-      cameraMode = 'free';
-      controls.enabled = true;
-      if (document.pointerLockElement === canvas) document.exitPointerLock?.();
-      camera.position.copy(savedFreePosition);
-      controls.target.copy(savedFreeTarget);
-      controls.update();
-      onModeChange('free');
-    }
   }
 
   function toggleEarthView() {
@@ -4288,7 +4263,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
   function handleCanvasClick() {
     if (isGameplaySuspended || eventCinematic || roverCameraActive) return;
     if (consoleEditMode) return;
-    if (['first-person', 'interior'].includes(cameraMode) && document.pointerLockElement !== canvas) {
+    if (!isPointerLockBlocked && ['first-person', 'interior'].includes(cameraMode) && document.pointerLockElement !== canvas) {
       canvas.requestPointerLock?.();
       return;
     }
@@ -4525,7 +4500,12 @@ export function createLunarEngine(canvas, callbacks = {}) {
   }
 
   function handleKeyDown(event) {
+    if (isPointerLockBlocked) {
+      releaseAllKeys();
+      return;
+    }
     const target = event.target;
+    if (target?.closest?.('button, a, [role="button"]')) return;
     const typing = target && (
       target.tagName === 'INPUT'
       || target.tagName === 'TEXTAREA'
@@ -4740,6 +4720,17 @@ export function createLunarEngine(canvas, callbacks = {}) {
     }
     controls.enabled = controlsEnabledBeforeSuspend;
     if (!animId) animId = requestAnimationFrame(animate);
+  }
+
+  function setPointerLockBlocked(blocked) {
+    const next = Boolean(blocked);
+    if (isDestroyed || isPointerLockBlocked === next) return;
+    isPointerLockBlocked = next;
+    if (next) {
+      releaseAllKeys();
+      firstPersonVelocity.set(0, 0, 0);
+      if (document.pointerLockElement === canvas) document.exitPointerLock?.();
+    }
   }
 
   const resizeObserver = typeof ResizeObserver === 'undefined'
@@ -5798,23 +5789,6 @@ export function createLunarEngine(canvas, callbacks = {}) {
     renderer.render(scene, camera);
     if (!sceneReadyReported && outpostRoot && moonTerrainMeshes.length === 2 && skyAssetReady && earthAssetsReady) {
       sceneReadyReported = true;
-      if (initialCameraApproach && !freeCameraAdjusted && cameraMode === 'free') {
-        const approach = initialCameraApproach;
-        const looker = new THREE.PerspectiveCamera();
-        looker.position.copy(approach.destination);
-        looker.lookAt(approach.focus);
-        controls.enabled = false;
-        dayStartCameraTransition = {
-          elapsed: 0,
-          duration: 4.4,
-          startPosition: camera.position.clone(),
-          startQuaternion: camera.quaternion.clone(),
-          destination: approach.destination.clone(),
-          destinationQuaternion: looker.quaternion.clone(),
-          focus: approach.focus.clone(),
-          enableControlsOnFinish: true,
-        };
-      }
       onSceneReady();
       if (!dayStartCameraTransition && !initialCameraSettledReported) {
         initialCameraSettledReported = true;
@@ -6230,7 +6204,7 @@ export function createLunarEngine(canvas, callbacks = {}) {
     jumpPlayer,
     lookTouch,
     setGameplaySuspended,
-    toggleCameraMode,
+    setPointerLockBlocked,
     toggleRoverCamera,
     // The player camera is one camera everywhere. This is the knob for how high
     // the player's eyes sit above the deck they are standing on; the surface and

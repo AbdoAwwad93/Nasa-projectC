@@ -4,7 +4,7 @@ import { createNoorSpeech } from '../../utils/missionVoice';
 import { getPlayerAddress } from '../../utils/playerAddress';
 import './MissionEventCall.css';
 
-export default function MissionEventCall({ call, narration, location, commanderName, onAnswer, onContinue }) {
+export default function MissionEventCall({ call, narration, location, commanderName, onAnswer, onContinue, onDismiss }) {
   const playerAddress = getPlayerAddress(commanderName);
   const event = call?.event;
   const eventKey = event?.occurrenceId ?? `${event?.id ?? 'event'}-${event?.day ?? 0}`;
@@ -27,6 +27,7 @@ export default function MissionEventCall({ call, narration, location, commanderN
 
   return (
     <div className="mission-event-call-backdrop" role="dialog" aria-modal="true" aria-labelledby="mission-event-call-title">
+      <button type="button" className="mission-event-call-dismiss" aria-label="Close Dr. Noor call" onClick={onDismiss}>×</button>
       {call.stage === 'incoming' ? (
         <section className="mission-event-incoming-card">
           <div className="mission-event-incoming-signal">
@@ -37,7 +38,7 @@ export default function MissionEventCall({ call, narration, location, commanderN
             <span className="mission-event-call-kicker">INCOMING OUTPOST CALL</span>
             <h2 id="mission-event-call-title">Dr. Noor is calling</h2>
             <p>She wants to explain <strong>{event.name}</strong> and how we can help.</p>
-            <button type="button" className="mission-event-call-button" onClick={onAnswer}>Okay, answer the call</button>
+            <button type="button" className="mission-event-call-button" data-keyboard-primary onClick={onAnswer}>Okay, answer the call</button>
           </div>
         </section>
       ) : (
@@ -55,7 +56,7 @@ export default function MissionEventCall({ call, narration, location, commanderN
               <small>Location: {location?.name ?? 'Outpost'}</small>
             </div>
           </div>
-          <footer><span>NOOR: “You’ve got this, {playerAddress}. Let’s take care of it together.”</span><button type="button" className="mission-event-call-button" onClick={onContinue}>Thanks, Dr. Noor · Let’s go</button></footer>
+          <footer><span>NOOR: “You’ve got this, {playerAddress}. Let’s take care of it together.”</span><button type="button" className="mission-event-call-button" data-keyboard-primary onClick={onContinue}>Thanks, Dr. Noor · Let’s go</button></footer>
         </section>
       )}
     </div>

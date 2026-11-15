@@ -10,8 +10,8 @@ const TOUR = [
   { target: 'photo-mode', place: 'PHOTO MODE', title: 'Revisit mission photos', player: 'Where do the Moon pictures go?', guide: 'Photo Mode opens your mission photo collection so you can revisit the pictures saved during the mission.' },
   { target: 'daily-jobs', place: 'TODAY’S JOBS', title: 'Choose a job for today', player: 'How do I look after the outpost?', guide: 'Open Today’s jobs to see the repairs and checks for today. Pick one, then follow its marker. Urgent problems will be flagged too.' },
   { target: 'resources', place: 'RESOURCES', title: 'Watch our supplies and safety', player: 'What should I keep an eye on?', guide: 'Open Resources to check power, battery, oxygen, water, food, and crew safety. If something gets low, prioritize a job that can help.' },
-  { target: 'walk-around', place: 'WALK AROUND', title: 'Explore the base on foot', player: 'How do I walk up to a module?', guide: 'In the overview, arrow keys move your astronaut. Choose Walk around for first person, then use W, A, S, D and your mouse to explore.' },
-  { target: 'drive-rover', place: 'DRIVE ROVER', title: 'Travel farther by rover', player: 'How do I explore the lunar surface?', guide: 'Choose Drive rover to switch to rover view. Use W or the up arrow to drive, S or down to reverse, and left or right to steer. Drag to look around and scroll to zoom.' },
+  { target: 'walk-around', place: 'FIRST PERSON', title: 'Walk the lunar surface', player: 'How do I explore?', guide: 'The mission starts in first person. Move with W/A/S/D or the joystick. Use the mouse or drag on the right to look around.' },
+  { target: 'drive-rover', place: 'ROVER MONITOR', title: 'Connect to a rover', player: 'How do I drive the rover?', guide: 'At the Command Center, walk up to the rover monitor and press Enter or click Drive. Use W/A/S/D to drive; press V to return to your astronaut.' },
   { target: null, place: 'READY FOR LAUNCH', title: 'Your first day starts now', player: 'I think I’m ready. What happens next?', guide: 'Welcome! Are you ready to get started? Let’s begin our adventure together!' },
 ];
 
@@ -22,8 +22,8 @@ const MOBILE_TOUR_GUIDES = {
   'photo-mode': 'Tap the camera icon to open your mission photo collection.',
   'daily-jobs': 'Tap the clipboard icon to see today’s repairs and checks. Choose a job, then follow its marker.',
   resources: 'Tap the chart icon to check power, oxygen, water, food, and crew safety.',
-  'walk-around': 'Tap the astronaut icon, move with the joystick on the left, and drag on the right side to look around.',
-  'drive-rover': 'Tap the rover icon. Push the joystick forward or back to drive and left or right to steer. Drag on the right side to look around.',
+  'walk-around': 'Move with W/A/S/D or the joystick. Use your mouse or drag on the right to look around.',
+  'drive-rover': 'At the Command Center, use the rover monitor prompt. Drive with W/A/S/D or the joystick; press V to return to your astronaut.',
 };
 
 export default function OutpostTutorial({ onComplete }) {
@@ -88,14 +88,21 @@ export default function OutpostTutorial({ onComplete }) {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (event.key === 'Escape') { event.preventDefault(); finish(); return; }
+      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); finish(); return; }
+      if (event.key === 'Enter' && !event.target.closest?.('button')) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (step === TOUR.length - 1) finish();
+        else setStep((value) => Math.min(value + 1, TOUR.length - 1));
+        return;
+      }
       if (event.key === 'ArrowRight') { event.preventDefault(); setStep((value) => Math.min(value + 1, TOUR.length - 1)); }
       if (event.key === 'ArrowLeft') { event.preventDefault(); setStep((value) => Math.max(value - 1, 0)); }
       if (['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown'].includes(event.key)) event.preventDefault();
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [finish]);
+  }, [finish, step]);
 
   const edgeInset = compactLandscape ? 8 : 14;
   const groupWidth = Math.min(compactLandscape ? 450 : 410, viewport.width - edgeInset * 2);

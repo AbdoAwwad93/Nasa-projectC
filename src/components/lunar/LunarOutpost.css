@@ -22,6 +22,56 @@
   font-family: var(--lunar-font-mono);
 }
 
+.lunar-keyboard-help {
+  position: fixed;
+  z-index: 10000;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(127, 240, 255, .22);
+  border-radius: 7px;
+  color: rgba(220, 240, 245, .78);
+  background: rgba(5, 15, 23, .78);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, .22);
+  font: 500 10px/1.2 var(--lunar-font-mono, monospace);
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+.lunar-keyboard-help kbd,
+.mission-story-keyboard-help kbd {
+  padding: 2px 5px;
+  border: 1px solid rgba(127, 240, 255, .3);
+  border-radius: 4px;
+  color: #aaf4fa;
+  background: rgba(25, 62, 75, .62);
+  font: inherit;
+}
+.lunar-keyboard-help > span,
+.mission-story-keyboard-help > span { color: rgba(127, 240, 255, .5); }
+.lunar-first-person-help {
+  position: fixed;
+  z-index: 15;
+  left: 50%;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  padding: 5px 9px;
+  border: 1px solid rgba(127, 240, 255, .18);
+  border-radius: 6px;
+  color: rgba(220, 240, 245, .7);
+  background: rgba(5, 15, 23, .62);
+  font: 500 9px/1.2 var(--lunar-font-mono, monospace);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.lunar-first-person-help kbd { padding: 1px 4px; border: 1px solid rgba(127, 240, 255, .3); border-radius: 3px; color: #aaf4fa; font: inherit; }
+.lunar-first-person-help > span { color: rgba(127, 240, 255, .5); }
+@media (hover: none), (pointer: coarse) {
+  .lunar-keyboard-help, .lunar-first-person-help { display: none; }
+}
+
 .lunar-canvas {
   position: absolute;
   inset: 0;

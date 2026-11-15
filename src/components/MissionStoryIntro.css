@@ -24,6 +24,7 @@
 .mission-story-next:hover { box-shadow: 0 8px 26px rgba(64, 193, 205, 0.34); }
 .mission-story-next span { margin-left: 9px; font-size: 1.1rem; }
 .mission-story-progress { display: flex; gap: 7px; margin-top: 30px; }
+.mission-story-keyboard-help { display: flex; align-items: center; gap: 6px; margin-top: 14px; color: #91b6c1; font: 500 .62rem/1.3 var(--lunar-font-mono, monospace); }
 .mission-story-progress i { width: 24px; height: 3px; border-radius: 4px; background: rgba(152, 184, 194, 0.2); }
 .mission-story-progress i.is-lit { background: #72dfe5; box-shadow: 0 0 10px rgba(114, 223, 229, 0.5); }
 @keyframes story-fade-in { from { opacity: 0; } to { opacity: 1; } }

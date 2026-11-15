@@ -301,6 +301,7 @@ export default function DailyTaskExperience({ task, commanderName, initialStage 
               <span className="daily-task-hold-label">{holding ? 'Keep holding…' : `${experience.action} · Hold here`}</span>
             </button>
             <span className="daily-task-progress-label">{Math.round(progress)}% done</span>
+            <small className="daily-task-keyboard-hint">Keyboard: hold <kbd>Enter</kbd> or <kbd>Space</kbd> to work</small>
           </div>
         )}
 

@@ -91,7 +91,7 @@ export default function EventModal({ event, events = [], onSelectEvent, taskTitl
           </div>
         )}
         <p className="simulation-event-situation">{event.situation}</p>
-        <button type="button" className="simulation-event-why" aria-expanded={whyOpen} onClick={() => setWhyState({ key: eventKey, open: !whyOpen })}>{whyOpen ? 'Hide why this matters' : 'Why does this matter?'}</button>
+        <button type="button" className="simulation-event-why" data-keyboard-skip aria-expanded={whyOpen} onClick={() => setWhyState({ key: eventKey, open: !whyOpen })}>{whyOpen ? 'Hide why this matters' : 'Why does this matter?'}</button>
         {whyOpen && <p className="simulation-event-lesson">{event.lesson}</p>}
         {locked ? <p className="simulation-event-prompt">The day is over. We’ll add this problem to your day report.</p>
           : canDecide
@@ -103,6 +103,7 @@ export default function EventModal({ event, events = [], onSelectEvent, taskTitl
               className={`simulation-decision simulation-decision-${decision.id.toLowerCase()}${/^allow(?:\s|$)/i.test(decision.label.trim()) || decision.id.toLowerCase() === 'allow' ? ' is-allow' : ''}`}
               key={decision.id}
               type="button"
+              data-keyboard-primary={event.decisions[0]?.id === decision.id ? 'true' : undefined}
               onClick={() => onSelectDecision(decision, event.occurrenceId ?? `${event.id}-${event.day ?? 0}`)}
             >
               <span className="simulation-decision-id">{decision.id}</span>
