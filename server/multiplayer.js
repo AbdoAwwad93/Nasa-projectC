@@ -23,17 +23,44 @@ const server = createServer(async (req, res) => {
       const playerId = String(body.playerId || randomUUID());
       let code;
       do { code = randomInt(0, 1_000_000).toString().padStart(6, '0'); } while (rooms.has(code));
-      const room = { code, hostId: playerId, started: false, players: [{ id: playerId, name: clean(body.name), ready: true }], completedTasks: [], events: [] };
+      const room = { code, hostId: playerId, started: false, players: [{ id: playerId, name: clean(body.name), ready: true }], completedTasks: [], events: [], voiceSignals: [] };
       rooms.set(code, room);
       return send(res, 201, { playerId, room: roomView(room) });
     }
-    const roomMatch = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]+)(?:\/(join|ready|start|tasks|events|leave|cancel|players\/position))?$/i);
+    const roomMatch = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]+)(?:\/(join|ready|start|tasks|events|leave|cancel|voice|players\/position))?$/i);
     if (!roomMatch) return send(res, 404, { error: 'Not found' });
     const [, rawCode, action] = roomMatch;
     const room = rooms.get(rawCode.toUpperCase());
     if (!room) return send(res, 404, { error: 'Room not found' });
     if (!action && req.method === 'GET') return send(res, 200, { room: roomView(room) });
+    if (action === 'voice' && req.method === 'GET') {
+      const playerId = String(url.searchParams.get('playerId') || '');
+      if (!room.started || !room.players.some((player) => player.id === playerId)) {
+        return send(res, 403, { error: 'Player is not active in this mission' });
+      }
+      const now = Date.now();
+      room.voiceSignals = (room.voiceSignals ?? []).filter((signal) => now - signal.at < 30_000);
+      const signals = room.voiceSignals.filter((signal) => signal.toId === playerId);
+      room.voiceSignals = room.voiceSignals.filter((signal) => signal.toId !== playerId);
+      return send(res, 200, { signals });
+    }
     const body = await readBody(req);
+    if (action === 'voice' && req.method === 'POST') {
+      const from = room.players.find((player) => player.id === body.fromId);
+      const to = room.players.find((player) => player.id === body.toId);
+      if (!room.started || !from || !to || from.id === to.id) {
+        return send(res, 403, { error: 'Both players must be active crew members' });
+      }
+      const type = String(body.type || '');
+      if (!['offer', 'answer', 'candidate'].includes(type)) return send(res, 400, { error: 'Invalid voice signal type' });
+      if (!body.payload || typeof body.payload !== 'object' || JSON.stringify(body.payload).length > 128_000) {
+        return send(res, 400, { error: 'Invalid voice signal payload' });
+      }
+      const now = Date.now();
+      room.voiceSignals = (room.voiceSignals ?? []).filter((signal) => now - signal.at < 30_000).slice(-511);
+      room.voiceSignals.push({ id: randomUUID(), fromId: from.id, toId: to.id, type, payload: body.payload, at: now });
+      return send(res, 202, { ok: true });
+    }
     if (action === 'leave' && req.method === 'POST') {
       const playerIndex = room.players.findIndex((entry) => entry.id === body.playerId);
       if (playerIndex < 0) return send(res, 404, { error: 'Player is not in this room' });

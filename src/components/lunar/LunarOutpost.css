@@ -4403,3 +4403,100 @@
     min-height: 32px;
   }
 }
+.lunar-actions-group .crew-voice-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  pointer-events: auto;
+}
+
+.lunar-actions-group .crew-voice-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(130, 202, 217, 0.48);
+  border-radius: 11px;
+  color: rgba(214, 235, 242, 0.78);
+  background: rgba(8, 23, 34, 0.55);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.lunar-actions-group .crew-voice-icon:hover {
+  color: #f2fdff;
+  border-color: rgba(127, 240, 255, 0.82);
+  background: rgba(22, 62, 76, 0.68);
+}
+
+.lunar-actions-group .crew-voice-icon:focus-visible {
+  outline: 2px solid rgba(127, 240, 255, 0.95);
+  outline-offset: 2px;
+}
+
+.lunar-actions-group .crew-voice-icon.is-active {
+  color: #9cf1e6;
+  border-color: rgba(103, 227, 212, 0.7);
+}
+
+.lunar-actions-group .crew-voice-icon.has-error {
+  color: #ffb2ad;
+  border-color: rgba(255, 134, 125, 0.7);
+}
+
+.crew-voice-icon svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.crew-voice-sr-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.crew-voice-controls { position: relative; }
+.crew-voice-error {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 30;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 24px));
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 139, 130, .46);
+  border-radius: 7px;
+  color: #ffd4d0;
+  background: rgba(28, 12, 15, .94);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .3);
+  font: 500 .65rem/1.35 var(--lunar-font-mono);
+  pointer-events: none;
+}
+
+.crew-voice-audio { display: none; }
+
+@media (max-width: 700px) {
+  .lunar-actions-group .crew-voice-controls { gap: 4px; }
+  .lunar-actions-group .crew-voice-icon {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    min-height: 34px;
+    border-radius: 10px;
+  }
+}

@@ -3,6 +3,7 @@ import { createLunarEngine } from './lunarOutpostEngine';
 import EventModal from '../EventModal';
 import EndGameReport from '../EndGameReport';
 import DailyTaskExperience from './DailyTaskExperience';
+import CrewVoiceChat from './CrewVoiceChat';
 import { getDailyTaskExperience } from '../../data/dailyTaskExperiences';
 import { getPlayerAddress } from '../../utils/playerAddress';
 import { getChapterReply, getEventNarration, getStoryCallback, LOCATION_STORY_CARDS, SCIENCE_DISCOVERIES, STORY_CHAPTERS, STORY_DAY_BEATS } from '../../data/missionStory';
@@ -1943,6 +1944,14 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
 
 
         <div className="lunar-actions-group">
+          {commanderProfile?.multiplayer && commanderProfile?.roomCode && (
+            <CrewVoiceChat
+              apiBase={MULTIPLAYER_API}
+              roomCode={commanderProfile.roomCode}
+              playerId={commanderProfile.playerId}
+              enabled={!tutorialMode && simulation.gameStatus === 'playing'}
+            />
+          )}
           {!insidePanel.visible && !isScienceNotebookOpen && (
             <button type="button" className="lunar-story-archive-button" data-tour-target="science-notebook" aria-label={`Science notebook, ${simulation.scienceNotebookIds.length} of ${SCIENCE_DISCOVERIES.length} discoveries`} title="Science notebook" disabled={outpostControlsDisabled} onClick={() => openMissionArchive('notebook')}>
               <svg className="lunar-mobile-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5c-2.2-2-5.5-2.3-9-1.5v13c3.5-.8 6.8-.5 9 1.5m0-13c2.2-2 5.5-2.3 9-1.5v13c-3.5-.8-6.8-.5-9 1.5M12 6.5v13" /><path d="M6.5 8.5c1.4-.2 2.5-.1 3.5.3m-3.5 3c1.4-.2 2.5-.1 3.5.3m7-3.6c1-.2 2.2-.2 3.5 0m-3.5 3c1-.2 2.2-.2 3.5 0" /></svg>
