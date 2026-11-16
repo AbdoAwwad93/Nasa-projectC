@@ -47,7 +47,7 @@ function getCommanderSafety(resources) {
 }
 
 const MULTIPLAYER_API = (sessionStorage.getItem('lunar-room-api') || import.meta.env.VITE_MULTIPLAYER_API_URL || `http://${window.location.hostname}:3001`).replace(/\/$/, '');
-const CREW_POSITION_STALE_MS = 8000;
+const CREW_POSITION_STALE_MS = 45_000;
 const RESOURCE_LABELS = {
   power: 'Power', battery: 'Battery', oxygen: 'Oxygen', water: 'Water', food: 'Food',
   habitat: 'Crew safety', equipment: 'Crew safety', health: 'Crew safety',
@@ -380,6 +380,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
   const queuedScienceIdsRef = useRef(new Set());
   const multiplayerEventIdsRef = useRef(new Set());
   const crewNotificationTimerRef = useRef(null);
+  const leaveRequestSentRef = useRef(false);
   const observedTaskDayRef = useRef(simulation.day);
   const [taskMarkerTargets, setTaskMarkerTargets] = useState([]);
   const autoStartedTaskComponentRef = useRef(null);
@@ -499,14 +500,24 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
   useEffect(() => {
     if (!commanderProfile?.multiplayer || !commanderProfile.roomCode) return undefined;
     let live = true;
+    let requestSequence = 0;
+    let lastAppliedSequence = 0;
     const pollCrew = async () => {
       try {
+        const sequence = ++requestSequence;
         const clientRequestStartedAt = Date.now();
-        const response = await fetchLocalNetwork(`${MULTIPLAYER_API}/api/rooms/${encodeURIComponent(commanderProfile.roomCode)}`);
+        const response = await fetchLocalNetwork(`${MULTIPLAYER_API}/api/rooms/${encodeURIComponent(commanderProfile.roomCode)}?playerId=${encodeURIComponent(commanderProfile.playerId)}`);
         if (!response.ok) return;
         const { room } = await response.json();
         const clientResponseReceivedAt = Date.now();
-        if (!live) return;
+        if (!live || sequence < lastAppliedSequence) return;
+        lastAppliedSequence = sequence;
+        if (!(room.players ?? []).some((player) => player.id === commanderProfile.playerId)) {
+          sessionStorage.removeItem('lunar-room-code');
+          sessionStorage.removeItem('lunar-room-api');
+          onRoomExit?.();
+          return;
+        }
         const hostIsAheadOfLocalDay = room.currentDay > simulation.day && simulation.dayPhase !== 'report';
         if (!hostIsAheadOfLocalDay) {
           simulation.syncMultiplayerClock({ ...room, clientRequestStartedAt, clientResponseReceivedAt });
@@ -565,12 +576,13 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
               roomEvent.type === 'player-left' && roomEvent.playerId === event.previousHostId
             ));
             const previousHostName = event.previousHostName || previousHostDeparture?.playerName || 'The host';
+            const previousHostAction = previousHostDeparture?.reason === 'disconnected' ? 'disconnected' : 'left';
             showCrewNotification(
               event.id,
               previousHostDeparture
                 ? event.playerId === commanderProfile.playerId
-                  ? `${previousHostName} left. You are now the mission host`
-                  : `${previousHostName} left. ${event.playerName || 'A crewmate'} is now the mission host`
+                  ? `${previousHostName} ${previousHostAction}. You are now the mission host`
+                  : `${previousHostName} ${previousHostAction}. ${event.playerName || 'A crewmate'} is now the mission host`
                 : event.playerId === commanderProfile.playerId
                   ? 'You are now the mission host'
                   : `${event.playerName || 'A crewmate'} is now the mission host`,
@@ -583,7 +595,8 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
               roomEvent.type === 'host-changed' && roomEvent.previousHostId === event.playerId
             ));
             if (event.playerId !== commanderProfile.playerId && !promotedAfterDeparture) {
-              showCrewNotification(event.id, `${event.playerName || 'A crewmate'} left the room`);
+              const departure = event.reason === 'disconnected' ? 'disconnected' : 'left the room';
+              showCrewNotification(event.id, `${event.playerName || 'A crewmate'} ${departure}`);
             }
             continue;
           }
@@ -622,7 +635,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
     void pollCrew();
     const timer = window.setInterval(pollCrew, 500);
     return () => { live = false; window.clearInterval(timer); };
-  }, [commanderProfile, simulation.day, simulation.dayPhase, simulation.gameStatus, simulation.syncMultiplayerClock, simulation.advanceDay, simulation.dailyChallenges, simulation.completeDailyChallenge, simulation.currentEvent, simulation.queuedEvents, simulation.eventPhase, simulation.makeDecision, simulation.abandonEvent, showCrewNotification]);
+  }, [commanderProfile, onRoomExit, simulation.day, simulation.dayPhase, simulation.gameStatus, simulation.syncMultiplayerClock, simulation.advanceDay, simulation.dailyChallenges, simulation.completeDailyChallenge, simulation.currentEvent, simulation.queuedEvents, simulation.eventPhase, simulation.makeDecision, simulation.abandonEvent, showCrewNotification]);
   useEffect(() => () => window.clearTimeout(crewNotificationTimerRef.current), []);
   useEffect(() => {
     if (!commanderProfile?.multiplayer || !commanderProfile.roomCode || isLoading) return undefined;
@@ -1875,6 +1888,7 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
   };
   const leaveCrewRoom = async () => {
     if (!commanderProfile?.multiplayer || !commanderProfile.roomCode || leavingRoom) return;
+    leaveRequestSentRef.current = true;
     setLeavingRoom(true);
     try {
       const response = await fetchLocalNetwork(`${MULTIPLAYER_API}/api/rooms/${encodeURIComponent(commanderProfile.roomCode)}/leave`, {
@@ -1883,12 +1897,16 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
         body: JSON.stringify({ playerId: commanderProfile.playerId }),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Could not leave the crew room.');
+      if (!response.ok) {
+        leaveRequestSentRef.current = false;
+        throw new Error(result.error || 'Could not leave the crew room.');
+      }
       sessionStorage.removeItem('lunar-room-code');
       sessionStorage.removeItem('lunar-room-api');
       setCrewRosterOpen(false);
       onRoomExit?.();
     } catch (error) {
+      leaveRequestSentRef.current = false;
       showCrewNotification(
         `leave-room-error-${Date.now()}`,
         error instanceof Error ? error.message : 'Could not leave the crew room.',
@@ -1897,6 +1915,27 @@ export default function LunarOutpost({ simulation, commanderProfile, tutorialMod
       setLeavingRoom(false);
     }
   };
+  useEffect(() => {
+    if (!commanderProfile?.multiplayer || !commanderProfile.roomCode || !commanderProfile.playerId) return undefined;
+    const leaveOnPageHide = (event) => {
+      if (event.persisted || leaveRequestSentRef.current) return;
+      leaveRequestSentRef.current = true;
+      const url = `${MULTIPLAYER_API}/api/rooms/${encodeURIComponent(commanderProfile.roomCode)}/leave`;
+      const body = JSON.stringify({ playerId: commanderProfile.playerId });
+      const beaconSent = typeof navigator.sendBeacon === 'function'
+        && navigator.sendBeacon(url, new Blob([body], { type: 'text/plain;charset=UTF-8' }));
+      if (!beaconSent) {
+        void fetchLocalNetwork(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          keepalive: true,
+        }).catch(() => {});
+      }
+    };
+    window.addEventListener('pagehide', leaveOnPageHide);
+    return () => window.removeEventListener('pagehide', leaveOnPageHide);
+  }, [commanderProfile]);
   return (
     <div
       className={`lunar-root${insidePanel.visible ? ' is-inside' : ''}${showOrientationGuidance ? ' is-gameplay-portrait' : ''}${mapIsOpen ? ' is-map-open' : ''}`}

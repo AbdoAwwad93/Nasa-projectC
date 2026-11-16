@@ -7,16 +7,66 @@ function formatTime(timestamp) {
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function readUnreadCount(key) {
+  try {
+    const count = Number(sessionStorage.getItem(key));
+    return Number.isFinite(count) ? Math.max(0, count) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function readMessageCursor(key) {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(key) || 'null');
+    return value && typeof value.id === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function messagesAfterCursor(messages, cursor, initialPoll) {
+  if (!cursor) return initialPoll ? [] : messages;
+  const cursorIndex = messages.findIndex((message) => message.id === cursor.id);
+  if (cursorIndex >= 0) return messages.slice(cursorIndex + 1);
+  if (Number.isFinite(cursor.seq)) return messages.filter((message) => message.seq > cursor.seq);
+  if (Number.isFinite(cursor.at)) return messages.filter((message) => message.at > cursor.at);
+  return messages;
+}
+
 export default function CrewTextChat({ apiBase, roomCode, playerId, playerName, enabled, open, onOpenChange }) {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
-  const [unread, setUnread] = useState(0);
+  const unreadStorageKey = `lunar-crew-chat-unread:${roomCode}:${playerId}`;
+  const cursorStorageKey = `lunar-crew-chat-cursor:${roomCode}:${playerId}`;
+  const [unread, setUnread] = useState(() => readUnreadCount(unreadStorageKey));
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const listRef = useRef(null);
-  const lastMessageIdRef = useRef(null);
+  const unreadRef = useRef(unread);
+  const openRef = useRef(open);
+  const lastMessageCursorRef = useRef(readMessageCursor(cursorStorageKey));
   const initializedRef = useRef(false);
   const wasNearBottomRef = useRef(true);
+  unreadRef.current = unread;
+  openRef.current = open;
+
+  const rememberCursor = (message) => {
+    if (!message?.id) return;
+    const current = lastMessageCursorRef.current;
+    if (Number.isFinite(current?.seq) && Number.isFinite(message.seq) && message.seq < current.seq) return;
+    const nextCursor = { id: message.id, seq: message.seq, at: message.at };
+    lastMessageCursorRef.current = nextCursor;
+    try { sessionStorage.setItem(cursorStorageKey, JSON.stringify(nextCursor)); } catch { /* Chat remains usable without storage. */ }
+  };
+
+  useEffect(() => {
+    initializedRef.current = false;
+    lastMessageCursorRef.current = readMessageCursor(cursorStorageKey);
+    const storedUnread = readUnreadCount(unreadStorageKey);
+    unreadRef.current = storedUnread;
+    setUnread(storedUnread);
+  }, [cursorStorageKey, unreadStorageKey]);
 
   useEffect(() => {
     if (!enabled || !apiBase || !roomCode || !playerId) return undefined;
@@ -32,23 +82,19 @@ export default function CrewTextChat({ apiBase, roomCode, playerId, playerName, 
         if (!response.ok) throw new Error(result.error || 'Crew chat is unavailable.');
         if (!live) return;
         const nextMessages = result.messages ?? [];
-        const previousLastId = lastMessageIdRef.current;
-        const previousLastIndex = previousLastId
-          ? nextMessages.findIndex((message) => message.id === previousLastId)
-          : -1;
-        const newMessages = previousLastIndex >= 0
-          ? nextMessages.slice(previousLastIndex + 1)
-          : previousLastId && nextMessages.length
-            ? nextMessages.slice(-1)
-            : [];
-        if (!initializedRef.current) {
-          initializedRef.current = true;
-          lastMessageIdRef.current = nextMessages.at(-1)?.id ?? null;
-        } else if (newMessages.length) {
-          lastMessageIdRef.current = nextMessages.at(-1)?.id ?? previousLastId;
+        const firstPoll = !initializedRef.current;
+        const newMessages = messagesAfterCursor(nextMessages, lastMessageCursorRef.current, firstPoll);
+        initializedRef.current = true;
+        if (newMessages.length) {
           const incomingCount = newMessages.filter((message) => message.playerId !== playerId).length;
-          if (incomingCount && !open) setUnread((count) => count + incomingCount);
+          if (incomingCount && !openRef.current) {
+            const nextUnread = unreadRef.current + incomingCount;
+            unreadRef.current = nextUnread;
+            setUnread(nextUnread);
+            try { sessionStorage.setItem(unreadStorageKey, String(nextUnread)); } catch { /* Badge remains available for this session. */ }
+          }
         }
+        rememberCursor(nextMessages.at(-1));
         setMessages(nextMessages);
         setError('');
       } catch (pollError) {
@@ -63,10 +109,14 @@ export default function CrewTextChat({ apiBase, roomCode, playerId, playerName, 
       live = false;
       window.clearInterval(timer);
     };
-  }, [apiBase, enabled, open, playerId, roomCode]);
+  }, [apiBase, enabled, playerId, roomCode]);
 
   useEffect(() => {
-    if (open) setUnread(0);
+    if (!open) return;
+    unreadRef.current = 0;
+    setUnread(0);
+    try { sessionStorage.setItem(unreadStorageKey, '0'); } catch { /* Chat remains usable without storage. */ }
+    rememberCursor(messages.at(-1));
   }, [open]);
 
   useEffect(() => {
@@ -90,8 +140,6 @@ export default function CrewTextChat({ apiBase, roomCode, playerId, playerName, 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Message could not be sent.');
       setMessages((current) => [...current.filter((entry) => entry.id !== result.message.id), result.message].slice(-100));
-      lastMessageIdRef.current = result.message.id;
-      initializedRef.current = true;
       setDraft('');
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : 'Message could not be sent.');

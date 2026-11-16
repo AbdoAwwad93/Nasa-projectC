@@ -5,6 +5,7 @@ import { networkInterfaces } from 'node:os';
 const rooms = new Map();
 const PORT = Number(process.env.PORT || 3001);
 const MAX_PLAYERS = 8;
+const PLAYER_HEARTBEAT_TIMEOUT_MS = 45_000;
 const DAY_TRANSITION_DURATION_MS = 5000;
 const HOST_IP = Object.values(networkInterfaces()).flat().find((address) => (
   address?.family === 'IPv4' && !address.internal && isPrivateIpv4(address.address)
@@ -24,7 +25,8 @@ const server = createServer(async (req, res) => {
       const playerId = String(body.playerId || randomUUID());
       let code;
       do { code = randomInt(0, 1_000_000).toString().padStart(6, '0'); } while (rooms.has(code));
-      const room = { code, hostId: playerId, started: false, currentDay: 1, finished: false, players: [{ id: playerId, name: clean(body.name), ready: true }], completedTasks: [], events: [], chatMessages: [], voiceSignals: [], rovers: [] };
+      const now = Date.now();
+      const room = { code, hostId: playerId, started: false, currentDay: 1, finished: false, players: [{ id: playerId, name: clean(body.name), ready: true, lastSeenAt: now }], completedTasks: [], events: [], chatMessages: [], chatSequence: 0, voiceSignals: [], rovers: [] };
       rooms.set(code, room);
       return send(res, 201, { playerId, room: roomView(room) });
     }
@@ -33,7 +35,16 @@ const server = createServer(async (req, res) => {
     const [, rawCode, action] = roomMatch;
     const room = rooms.get(rawCode.toUpperCase());
     if (!room) return send(res, 404, { error: 'Room not found' });
-    if (!action && req.method === 'GET') return send(res, 200, { room: roomView(room) });
+    if (!action && req.method === 'GET') {
+      const requesterId = String(url.searchParams.get('playerId') || '');
+      const requester = room.players.find((player) => player.id === requesterId);
+      if (requester) requester.lastSeenAt = Date.now();
+      if (pruneInactivePlayers(room)) {
+        rooms.delete(room.code);
+        return send(res, 404, { error: 'Room is no longer active' });
+      }
+      return send(res, 200, { room: roomView(room) });
+    }
     if (action === 'chat' && req.method === 'GET') {
       const playerId = String(url.searchParams.get('playerId') || '');
       if (!room.started || !room.players.some((player) => player.id === playerId)) {
@@ -70,32 +81,7 @@ const server = createServer(async (req, res) => {
       return send(res, 202, { ok: true });
     }
     if (action === 'leave' && req.method === 'POST') {
-      const playerIndex = room.players.findIndex((entry) => entry.id === body.playerId);
-      if (playerIndex < 0) return send(res, 404, { error: 'Player is not in this room' });
-      const [leavingPlayer] = room.players.splice(playerIndex, 1);
-      const leftAt = Date.now();
-      room.events.push({
-        id: randomUUID(),
-        type: 'player-left',
-        playerId: leavingPlayer.id,
-        playerName: leavingPlayer.name,
-        at: leftAt,
-      });
-      room.rovers = (room.rovers ?? []).filter((rover) => rover.driverId !== leavingPlayer.id);
-      if (room.hostId === leavingPlayer.id) {
-        room.hostId = room.players[0]?.id ?? null;
-        if (room.hostId) {
-          room.events.push({
-            id: randomUUID(),
-            type: 'host-changed',
-            playerId: room.hostId,
-            playerName: room.players[0].name,
-            previousHostId: leavingPlayer.id,
-            previousHostName: leavingPlayer.name,
-            at: Date.now(),
-          });
-        }
-      }
+      if (!removeRoomPlayer(room, body.playerId)) return send(res, 404, { error: 'Player is not in this room' });
       if (room.players.length === 0) rooms.delete(room.code);
       return send(res, 200, { room: roomView(room) });
     }
@@ -111,7 +97,8 @@ const server = createServer(async (req, res) => {
       const id = String(body.playerId || randomUUID());
       let player = room.players.find((entry) => entry.id === id);
       if (!player && room.players.length >= MAX_PLAYERS) return send(res, 409, { error: 'Room is full' });
-      if (!player) { player = { id, name: clean(body.name), ready: false }; room.players.push(player); }
+      if (!player) { player = { id, name: clean(body.name), ready: false, lastSeenAt: Date.now() }; room.players.push(player); }
+      else player.lastSeenAt = Date.now();
       return send(res, 200, { playerId: id, room: roomView(room) });
     }
     if (action === 'ready' && req.method === 'POST') {
@@ -119,6 +106,7 @@ const server = createServer(async (req, res) => {
       const player = room.players.find((entry) => entry.id === body.playerId);
       if (!player) return send(res, 403, { error: 'Player is not in this room' });
       player.ready = Boolean(body.ready);
+      player.lastSeenAt = Date.now();
       return send(res, 200, { room: roomView(room) });
     }
     if (action === 'start' && req.method === 'POST') {
@@ -158,8 +146,9 @@ const server = createServer(async (req, res) => {
       }
       const messageText = String(body.message ?? '').trim().slice(0, 240);
       if (!messageText) return send(res, 400, { error: 'Type a message first' });
-      const message = { id: randomUUID(), playerId: player.id, playerName: player.name, message: messageText, at: Date.now() };
       room.chatMessages ??= [];
+      room.chatSequence = (room.chatSequence ?? 0) + 1;
+      const message = { id: randomUUID(), seq: room.chatSequence, playerId: player.id, playerName: player.name, message: messageText, at: Date.now() };
       room.chatMessages.push(message);
       if (room.chatMessages.length > 100) room.chatMessages.splice(0, room.chatMessages.length - 100);
       return send(res, 201, { message });
@@ -211,6 +200,7 @@ const server = createServer(async (req, res) => {
         componentId: typeof componentId === 'string' ? componentId.slice(0, 12) : null,
         updatedAt: Date.now(),
       };
+      player.lastSeenAt = player.position.updatedAt;
       room.rovers ??= [];
       if (body.rover == null) {
         room.rovers = room.rovers.filter((rover) => rover.driverId !== player.id);
@@ -256,6 +246,64 @@ async function readBody(req) {
   let raw = '';
   for await (const chunk of req) raw += chunk;
   return raw ? JSON.parse(raw) : {};
+}
+
+function removeRoomPlayer(room, playerId, reason = 'left') {
+  const playerIndex = room.players.findIndex((entry) => entry.id === playerId);
+  if (playerIndex < 0) return false;
+  const [leavingPlayer] = room.players.splice(playerIndex, 1);
+  room.events.push({
+    id: randomUUID(),
+    type: 'player-left',
+    playerId: leavingPlayer.id,
+    playerName: leavingPlayer.name,
+    reason,
+    at: Date.now(),
+  });
+  room.rovers = (room.rovers ?? []).filter((rover) => rover.driverId !== leavingPlayer.id);
+  if (room.hostId === leavingPlayer.id) promoteRoomHost(room, leavingPlayer);
+  return true;
+}
+
+function promoteRoomHost(room, previousHost) {
+  room.hostId = room.players[0]?.id ?? null;
+  if (!room.hostId) return;
+  room.events.push({
+    id: randomUUID(),
+    type: 'host-changed',
+    playerId: room.hostId,
+    playerName: room.players[0].name,
+    previousHostId: previousHost.id,
+    previousHostName: previousHost.name,
+    at: Date.now(),
+  });
+}
+
+function pruneInactivePlayers(room) {
+  if (!room.started) return false;
+  const now = Date.now();
+  const inactive = room.players.filter((player) => (
+    Number.isFinite(player.lastSeenAt)
+    && now - player.lastSeenAt > PLAYER_HEARTBEAT_TIMEOUT_MS
+  ));
+  if (inactive.length === 0) return false;
+
+  const inactiveIds = new Set(inactive.map((player) => player.id));
+  room.players = room.players.filter((player) => !inactiveIds.has(player.id));
+  room.rovers = (room.rovers ?? []).filter((rover) => !inactiveIds.has(rover.driverId));
+  for (const player of inactive) {
+    room.events.push({
+      id: randomUUID(),
+      type: 'player-left',
+      playerId: player.id,
+      playerName: player.name,
+      reason: 'disconnected',
+      at: now,
+    });
+  }
+  const formerHost = inactive.find((player) => player.id === room.hostId);
+  if (formerHost) promoteRoomHost(room, formerHost);
+  return room.players.length === 0;
 }
 
 server.listen(PORT, '0.0.0.0', () => {

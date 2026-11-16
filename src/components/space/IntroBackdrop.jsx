@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ASSETS } from './launchConfig';
-import { disableGameSound, enableGameSound } from '../../utils/gameAudio';
+import { enableGameSound } from '../../utils/gameAudio';
 
 /** Plays the intro clips in sequence with one continuous voice-over track. */
-export default function IntroBackdrop({ visible, finished, onSequenceEnd, soundChoice, onSoundChoice }) {
+export default function IntroBackdrop({ visible, finished, onSequenceEnd }) {
   const firstRef = useRef(null);
   const secondRef = useRef(null);
   const audioRef = useRef(null);
@@ -13,7 +13,6 @@ export default function IntroBackdrop({ visible, finished, onSequenceEnd, soundC
   const activeRef = useRef(false);
   const attemptRef = useRef(0);
   const [secondActive, setSecondActive] = useState(false);
-  const [audioError, setAudioError] = useState('');
   activeRef.current = visible && !finished;
 
   const finishSequenceIfReady = useCallback(() => {
@@ -31,14 +30,45 @@ export default function IntroBackdrop({ visible, finished, onSequenceEnd, soundC
     [firstRef.current, secondRef.current, audioRef.current].forEach((media) => media?.pause());
   }, []);
 
-  const beginPlayback = useCallback(() => {
+  const tryStartAudio = useCallback(() => {
     if (!activeRef.current || audioDoneRef.current || audioStartedRef.current) return;
+    const audio = audioRef.current;
+    if (!audio) {
+      audioDoneRef.current = true;
+      finishSequenceIfReady();
+      return;
+    }
+    enableGameSound();
+    audioStartedRef.current = true;
+    try {
+      audio.currentTime = 0;
+      const playback = audio.play();
+      Promise.resolve(playback).then(() => {
+        if (!activeRef.current) audio.pause();
+      }).catch((error) => {
+        if (!activeRef.current) return;
+        audioStartedRef.current = false;
+        audio.pause();
+        // Browsers may block audible autoplay. Let the silent intro finish;
+        // game audio unlocks on the player's first input.
+        audioDoneRef.current = true;
+        finishSequenceIfReady();
+      });
+    } catch {
+      audioStartedRef.current = false;
+      audioDoneRef.current = true;
+      finishSequenceIfReady();
+    }
+  }, [finishSequenceIfReady]);
+
+  const beginPlayback = useCallback(() => {
+    if (!activeRef.current) return;
     const attempt = ++attemptRef.current;
     const first = firstRef.current;
     if (!first) return;
 
-    const videoPromise = first.play();
-    Promise.resolve(videoPromise).then(() => {
+    tryStartAudio();
+    Promise.resolve(first.play()).then(() => {
       if (!activeRef.current || attempt !== attemptRef.current) return;
     }).catch((error) => {
       if (!activeRef.current || attempt !== attemptRef.current) return;
@@ -58,46 +88,7 @@ export default function IntroBackdrop({ visible, finished, onSequenceEnd, soundC
         finishSequenceIfReady();
       });
     });
-  }, [finishSequenceIfReady]);
-
-  const enableIntroSound = useCallback(() => {
-    if (!activeRef.current || audioDoneRef.current || audioStartedRef.current) return;
-    const audio = audioRef.current;
-    if (!audio) return;
-    enableGameSound();
-    audioStartedRef.current = true;
-    setAudioError('');
-    try {
-      audio.currentTime = 0;
-      const playback = audio.play();
-      Promise.resolve(playback).then(() => {
-        if (!activeRef.current) return;
-        onSoundChoice?.('enabled');
-      }).catch((error) => {
-        if (!activeRef.current) return;
-        audioStartedRef.current = false;
-        audio.pause();
-        setAudioError(error?.name === 'NotAllowedError'
-          ? 'Tap Enable sound again to allow playback.'
-          : 'Sound could not start. You can continue muted.');
-        onSoundChoice?.(null);
-      });
-    } catch {
-      audioStartedRef.current = false;
-      setAudioError('Sound could not start. You can continue muted.');
-      onSoundChoice?.(null);
-    }
-  }, [onSoundChoice]);
-
-  const continueMuted = useCallback(() => {
-    disableGameSound();
-    audioRef.current?.pause();
-    audioStartedRef.current = false;
-    audioDoneRef.current = true;
-    setAudioError('');
-    onSoundChoice?.('muted');
-    finishSequenceIfReady();
-  }, [finishSequenceIfReady, onSoundChoice]);
+  }, [finishSequenceIfReady, tryStartAudio]);
 
   useEffect(() => {
     if (visible && !finished) beginPlayback();
@@ -125,8 +116,8 @@ export default function IntroBackdrop({ visible, finished, onSequenceEnd, soundC
   const handleAudioError = () => {
     if (!activeRef.current || audioDoneRef.current) return;
     audioStartedRef.current = false;
-    setAudioError('Sound could not be loaded. You can continue muted.');
-    onSoundChoice?.(null);
+    audioDoneRef.current = true;
+    finishSequenceIfReady();
   };
 
   return (
@@ -134,17 +125,6 @@ export default function IntroBackdrop({ visible, finished, onSequenceEnd, soundC
       <video ref={firstRef} className={`intro-backdrop ${secondActive ? 'intro-backdrop--inactive' : ''}`} src={ASSETS.introVideo} muted playsInline preload="auto" disablePictureInPicture onEnded={handleFirstEnded} onError={handleFirstEnded} />
       <video ref={secondRef} className={`intro-backdrop ${secondActive ? '' : 'intro-backdrop--inactive'}`} src={ASSETS.introVideoSecond} muted playsInline preload="auto" disablePictureInPicture onEnded={handleSecondEnded} onError={handleSecondEnded} />
       <audio ref={audioRef} src={ASSETS.introVoiceover} preload="auto" onEnded={finishAudio} onError={handleAudioError} />
-      {visible && !finished && soundChoice === null && (
-        <section className="launch-sound-prompt" aria-label="Sound settings">
-          <div>
-            <strong>Hear the mission?</strong>
-            <span>Turn on sound for the voice-over and game alerts.</span>
-            {audioError && <small role="status">{audioError}</small>}
-          </div>
-          <button type="button" className="launch-sound-enable" onClick={enableIntroSound}>Enable sound</button>
-          <button type="button" className="launch-sound-muted" onClick={continueMuted}>Continue muted</button>
-        </section>
-      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 let audioContext = null;
-let gameSoundEnabled = false;
+let gameSoundEnabled = true;
 
 function getAudioContext() {
   if (typeof window === 'undefined') return null;
@@ -43,4 +43,16 @@ export function playGameNotificationChime() {
     oscillator.start(startAt);
     oscillator.stop(startAt + 0.2);
   } catch { /* Keep gameplay usable when sound is unavailable. */ }
+}
+
+if (typeof window !== 'undefined') {
+  const unlockOnFirstInput = () => {
+    enableGameSound();
+    window.removeEventListener('pointerdown', unlockOnFirstInput, true);
+    window.removeEventListener('keydown', unlockOnFirstInput, true);
+    window.removeEventListener('touchstart', unlockOnFirstInput, true);
+  };
+  window.addEventListener('pointerdown', unlockOnFirstInput, true);
+  window.addEventListener('keydown', unlockOnFirstInput, true);
+  window.addEventListener('touchstart', unlockOnFirstInput, true);
 }

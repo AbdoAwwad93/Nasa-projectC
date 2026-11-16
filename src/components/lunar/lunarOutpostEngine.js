@@ -40,7 +40,7 @@ export const PLAYER_CAMERA = {
 };
 
 // Final world-space height for remote crew avatars; adjust this to resize them.
-export const CREW_AVATAR_HEIGHT = 0.05;
+export const CREW_AVATAR_HEIGHT = 1.65;
 // Correct the model's forward axis so its face follows the first-person view.
 export const CREW_AVATAR_FORWARD_OFFSET = Math.PI;
 
@@ -5979,8 +5979,8 @@ export function createLunarEngine(canvas, callbacks = {}) {
       depthWrite: false,
       toneMapped: false,
     }));
-    labelSprite.scale.set(4.4, 1.1, 1);
-    labelSprite.position.y = CREW_AVATAR_HEIGHT + 0.65;
+    labelSprite.scale.set(2.2, 0.55, 1);
+    labelSprite.position.y = CREW_AVATAR_HEIGHT + 0.18;
     labelSprite.renderOrder = 992;
     group.add(labelSprite);
 

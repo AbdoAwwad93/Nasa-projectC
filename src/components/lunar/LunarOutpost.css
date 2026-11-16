@@ -51,6 +51,30 @@
 }
 .lunar-keyboard-help > span,
 .mission-story-keyboard-help > span { color: rgba(127, 240, 255, .5); }
+.lunar-crew-task-notification {
+  position: fixed;
+  z-index: 10020;
+  top: calc(env(safe-area-inset-top, 0px) + 68px);
+  left: 50%;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 28px));
+  padding: 11px 17px;
+  border: 1px solid rgba(103, 226, 235, .52);
+  border-radius: 11px;
+  color: #edfcff;
+  background: rgba(5, 20, 31, .94);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .4), 0 0 22px rgba(64, 204, 219, .18);
+  font: 600 .78rem/1.35 'Trebuchet MS', 'Segoe UI', sans-serif;
+  text-align: center;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  animation: lunar-crew-notice-in-out 2s ease both;
+}
+@keyframes lunar-crew-notice-in-out {
+  0% { opacity: 0; transform: translate(-50%, -14px); }
+  12%, 76% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -16px); }
+}
 .lunar-first-person-help {
   position: fixed;
   z-index: 15;

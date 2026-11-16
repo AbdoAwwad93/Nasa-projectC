@@ -64,7 +64,7 @@ export default function MultiplayerLobby({ onStart, onRoomExit }) {
     if (!roomCode) return;
     try {
       const clientRequestStartedAt = Date.now();
-      const result = await request(`/api/rooms/${encodeURIComponent(roomCode)}`, undefined, roomApi);
+      const result = await request(`/api/rooms/${encodeURIComponent(roomCode)}?playerId=${encodeURIComponent(playerId)}`, undefined, roomApi);
       const clientResponseReceivedAt = Date.now();
       if (result.room.cancelled) {
         if (!roomExitHandledRef.current) {
